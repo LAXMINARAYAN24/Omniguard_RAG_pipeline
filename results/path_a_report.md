@@ -1,6 +1,6 @@
 # OmniGuard-RAG — Path A Evaluation Report
 
-Generated 2026-08-30 06:37 UTC. All figures are mean ± 95% confidence interval (Student's-t) across 8 independent seeds: [7, 11, 23, 41, 59, 79, 97, 113]. Each seed is an independently regenerated corpus, query set, and DRS calibration split (not just a reshuffle of the same data) at 200 queries/seed, docs_per_topic=30.
+Generated 2026-08-30 12:15 UTC. All figures are mean ± 95% confidence interval (Student's-t) across 8 independent seeds: [7, 11, 23, 41, 59, 79, 97, 113]. Each seed is an independently regenerated corpus, query set, and DRS calibration split (not just a reshuffle of the same data) at 200 queries/seed, docs_per_topic=30.
 
 Ring 1 (DRS) held-out false-positive rate on fresh, non-malicious docs: **0.8±1.1%** (n=5 fresh docs/topic/seed).
 
