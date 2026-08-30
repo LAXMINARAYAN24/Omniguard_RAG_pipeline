@@ -1,0 +1,84 @@
+% ============================================================================
+% sections/sec6_conclusion.tex
+% ============================================================================
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+\subsection{Conclusion}
+
+A layered, empirically honest defense architecture against retrieval
+poisoning was designed, implemented, and evaluated against real attack
+constructions drawn from six cited papers. No single ring is sufficient
+alone --- each has a real, measured limitation, stated in this report
+rather than smoothed over --- but the combination of four rings plus a
+persistent, cross-query trust store closes the measured gaps within this
+simulation's scope, reaching $100.0\pm0.0\%$ accuracy and $0.0\pm0.0\%$
+overall attack success across 1{,}600 evaluation queries
+(\Cref{tab:main-comparison}).
+
+Equally significant for a project of this kind is its debugging
+discipline. Eight distinct, real, measured bugs were found across the
+project's development --- from a self-referential filter threshold to a
+consensus mechanism that silently did nothing at all
+(\Cref{tab:debugging}) --- each fixed by direct measurement rather than
+by adjusting a parameter until a target number appeared. That
+verification trail is itself evidence of sound methodology and is
+presented here alongside the final numbers rather than left out of the
+report.
+
+The most genuinely novel contributions of this work are, in order of how
+directly they were earned through this project's own measurement rather
+than inherited from the surveyed literature:
+
+\begin{enumerate}
+\item Dual-signal risk routing (embedding cohesion together with
+  answer-vote contention) --- discovered empirically during this project,
+  not inherited directly from any one cited paper.
+\item Group-wise counterfactual consensus --- a genuine generalization of
+  RAGuard's leave-one-out to colluding cliques, with an honestly reported
+  single-query ceiling (\Cref{sec:discussion}), reached only after a real
+  implementation bug was found and fixed (\Cref{sec:debugging}, bug \#7).
+\item A persistent, cross-query trust store --- closes the specific
+  single-query information ceiling that \Cref{sec:discussion} identifies
+  GWCC alone cannot close.
+\item Risk-based compute escalation --- a fast path for the common case,
+  with deep validation reserved for queries that genuinely trigger a risk
+  signal, rather than a fixed multi-pass cost on every query.
+\item A unified, multi-threat evaluation harness --- six attack regimes
+  against six systems, with multi-seed confidence intervals and a
+  per-ring ablation, in one framework built specifically so its
+  components cannot silently drift apart from one another
+  (\Cref{sec:multiseed}).
+\end{enumerate}
+
+\subsection{Future Work}
+\label{sec:future-work}
+
+\begin{enumerate}
+\item Run the TF-IDF-vs-LSA embedding comparison already present in the
+  codebase (\texttt{run\_\allowbreak embedding\_\allowbreak
+  comparison.py}) to test whether Ring~1's vocabulary-novelty advantage
+  survives a richer embedding space.
+\item Replace \texttt{doc.answer} with a real, small LLM call, to
+  validate end-to-end the one assumption every ring in this pipeline
+  currently depends on --- that a document's supported answer is reliably
+  extractable by a language model, not only by a ground-truth label.
+\item Test against adaptive attackers specifically optimized to evade
+  Ring~0's repetition-ratio threshold and Ring~2's contention threshold,
+  rather than the realistic-but-non-adaptive attacks evaluated here.
+\item Explicitly measure the detection-versus-runtime trade-off of
+  Ring~3's \texttt{MAX\_PAIR\_SAMPLES} cap, rather than leaving it fixed
+  at its current constant.
+\item Validate the whole pipeline on a naturally authored corpus (for
+  example a BEIR, Natural Questions, or HotpotQA subset), to check
+  whether the shared-generator finding in \Cref{sec:shared-generator} ---
+  that overly uniform clean text can create unintended structural
+  fingerprints --- generalizes beyond this project's synthetic,
+  template-generated text.
+\item Package the benchmark harness itself as an open-source
+  red-teaming tool, so the specific question this project's own
+  \Cref{sec:discussion} raises --- does a given RAG defense's risk signal
+  measure more than one attack axis --- can be tested against other,
+  independently built RAG pipelines, not only against the baselines
+  re-implemented here.
+\end{enumerate}

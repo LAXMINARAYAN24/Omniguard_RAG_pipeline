@@ -1,0 +1,128 @@
+% ============================================================================
+% sections/sec4_workdone.tex
+% ============================================================================
+\section{Work Done}
+\label{sec:workdone}
+
+\subsection{Development Environment}
+\label{sec:devenv}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l Y@{}}
+\toprule
+\textbf{Component} & \textbf{Specification} \\
+\midrule
+Language / runtime & Python 3.12, standard library \texttt{dataclasses}, \texttt{argparse}, \texttt{json}, \texttt{pathlib} \\
+Numerical / statistical stack & NumPy (SVD-based PCA, similarity math), scikit-learn (\texttt{TfidfVectorizer}, and \texttt{TruncatedSVD} for the Path~B embedding comparison), SciPy (Student's-$t$ critical values) \\
+No external model APIs & No hosted embedding model or LLM call anywhere in the evaluation loop --- the execution environment has no network access. TF-IDF is a real, self-contained, fully inspectable embedding method; \Cref{sec:limitations} states explicitly what this scope choice does and does not validate. \\
+Project structure & \texttt{unified\_rag\_defense/} package (14 modules); \texttt{results/} for generated output; \texttt{claude/} for the six reference papers and development logs \\
+Execution scripts & \texttt{run\_omniguard\_benchmark.py} (single-seed sanity check, main comparison only), \texttt{run\_full\_evaluation.py} (checkpointed multi-seed evaluation --- runs both the main comparison and the per-ring ablation ladder together, reusing shared world-building and query-loop logic so the two cannot silently drift apart, \Cref{sec:multiseed}), \texttt{run\_gwcc\_diagnostic.py} (targeted Ring~3 verification), \texttt{run\_embedding\_comparison.py} (Path~B, TF-IDF vs.\ LSA; see \Cref{sec:future-work}) \\
+\bottomrule
+\end{tabularx}
+\caption{Development environment and project structure.}
+\label{tab:devenv}
+\end{table}
+
+\textbf{Note on scope.} This is a simulated retrieval environment: real
+TF-IDF embeddings and real generated text throughout, but
+\texttt{doc.answer} is a ground-truth label standing in for what a live
+LLM would extract from a retrieved passage, for every ring and every
+baseline alike. No live LLM sits in the evaluation loop. This limitation
+is stated here and repeated in \Cref{sec:limitations} rather than left
+implicit.
+
+\subsection{Debugging and Verification Log}
+\label{sec:debugging}
+
+This project's development produced eight distinct, measured software
+bugs, each caught by direct measurement rather than by inspection alone
+and each fixed with a specific, verifiable change. \Cref{tab:debugging}
+lists them in the order they were found. This log is presented as part of
+the project's methodology, on the view that a defense evaluation's
+credibility rests as much on how its own measurement errors were caught
+as on its final numbers.
+
+\begin{table}[htbp]
+\centering
+\scriptsize
+\begin{tabularx}{\textwidth}{@{}c Y Y Y@{}}
+\toprule
+\textbf{\#} & \textbf{Bug} & \textbf{How found} & \textbf{Fix} \\
+\midrule
+1 & Over-blocking headline result: 0\% ASR reached by dropping accuracy to $\sim$20\% & Direct comparison against baseline accuracy on the same queries & Full rebuild onto real generated text and a real TF-IDF space, replacing tunable synthetic noise vectors carrying a hand-set ``evasion bias'' parameter \\
+2 & TriShield Ring~1 outlier check was a no-op in an early ad hoc version: an L2-normalized vector compared against 1.0 is always 1.0 & Direct measurement (printed norms for poison vs.\ clean documents) & First replaced with a unique-term-count cutoff; later superseded entirely by a faithful implementation of TriShieldRAG's own published three-signal Algorithm~1 score (repetition/perplexity, boilerplate pattern, embedding outlier), so any document this ring still misses represents the cited design's own real blind spot, not a placeholder gap \\
+3 & Poison tracking label leaking into the embedded text: the literal bookkeeping string \texttt{"ATTACKER\_TARGET"} was embedded as part of poison documents, fell out-of-vocabulary, and made poison a trivial spectral outlier for the wrong reason & Code inspection, confirmed by measuring DRS's separation between poison and clean scores & Poison text now states a fluent, readable false claim; the tracking label is metadata only and is never passed to the embedder \\
+4 & Trust-store cross-query identity leak: poison documents reused generic IDs (e.g.\ \texttt{poison\_std}) across every query, so the Dynamic Trust Store's per-document scores persisted and accumulated across unrelated queries that happened to reuse the same ID & Code inspection of the trust store's keying logic & Every generated document ID now includes the originating query's ID, scoping trust correctly per document per query \\
+5 & Non-determinism: an identical script produced different numbers on two separate runs with identical arguments & Ran the same script twice and diffed the output & Python's process-randomized built-in \texttt{hash()}, on which an early version of regime selection depended, replaced with a fixed integer table (\texttt{REGIME\_SALT}) \\
+6 & DRS self-referential threshold (\Cref{sec:literature}): the PCA subspace and the rejection threshold were fit and calibrated on the identical reference set, so the filter had learned to reject anything simply absent from its own fit sample --- measured directly, 80/80 (100\%) of brand-new, entirely legitimate documents were falsely flagged & A dedicated held-out test: freshly generated, non-attack documents never used in fitting or calibrating the filter & Reference set split into a fit subset (defines the low-variance subspace) and a disjoint, held-out calibration subset (defines the threshold); see \Cref{sec:ring2} for the resulting parameters \\
+7 & Ring~3 (GWCC) was a silent no-op: its ``vote across counterfactual subsets'' never once differed from a plain single-pass vote on the same retrieved set --- extra calls were being spent for zero effect on the answer & A dedicated diagnostic script (\texttt{run\_gwcc\_diagnostic.py}) sweeping the collusion attack's poison count from 3 to 12 and comparing GWCC's verdict against a plain vote on every escalated query: 0 divergences out of 653 tested cases & Rewritten as genuine leave-group-out \emph{exclusion} (RAGuard/ZKIP's own leave-one-out logic, generalized to pairs), restricted to pairs meeting a specific self-corroborating-clique test; \Cref{sec:ring3} and \Cref{sec:discussion} give the full mechanism and its measured effect \\
+8 & Ring~2 single-signal blindness: cohesion-only routing never escalated a fully camouflaged stealth-collusion attack to Ring~3, because such an attack is geometrically indistinguishable from clean retrieval by construction --- exactly the ``false consensus'' failure mode TriShieldRAG's own paper documents & Reasoning from the cited literature, confirmed by direct measurement: mean top-5 cohesion was 0.70 under attack and 0.70 on clean queries, statistically indistinguishable & Added a second, independent signal --- answer-vote contention --- and escalate to Ring~3 if either signal fires (\Cref{sec:ring2}) \\
+\bottomrule
+\end{tabularx}
+\caption{Debugging and verification log --- eight measured bugs and their fixes, in discovery order.}
+\label{tab:debugging}
+\end{table}
+
+Bug \#7 deserves a fuller note here beyond the table, since it concerns
+this project's own headline novel mechanism and was found and fixed after
+an earlier version of this report had already stated the opposite
+conclusion. The original claim --- that GWCC ``resolves cases the fast
+path alone would not'' --- has two separable parts. The first, that
+Ring~3 is invoked specifically because the contention signal fires on
+cases cohesion alone would wave through, was and remains true, verified
+directly. The second, that GWCC's own aggregation step, once invoked,
+recovers a different and correct answer that a plain vote on the same
+input would have missed, was asserted but had not actually been tested.
+Testing it directly is precisely what surfaced bug \#7: the aggregation
+step, as originally implemented, provably never did this, in any of the
+653 escalated cases checked. \Cref{sec:results} and \Cref{sec:discussion}
+report the fixed mechanism's own real, measured, non-zero ceiling, rather
+than repeating the original, disproven claim.
+
+One further non-bug finding is worth recording alongside
+\Cref{tab:debugging}: ShieldRAG's push--pull query-time embedding
+reshaping, as translated into this evaluation's baseline
+implementation, is mathematically a no-op in this environment --- it
+reinforces whichever answer already holds the retrieval plurality and
+cannot flip the outcome, confirmed empirically as zero divergent
+outcomes against Vanilla RAG across every attacked case tested. This is
+not a bug in the sense of an incorrect implementation; it is a genuine,
+measured property of this specific translation of the cited algorithm
+into a TF-IDF, ground-truth-label evaluation setting, reported here for
+the same reason every other measured limitation in this project is
+reported rather than smoothed over.
+
+\subsection{Evaluation Methodology in Practice}
+\label{sec:eval-practice}
+
+\textbf{Corpus.} Sixteen real topics (photosynthesis, the TCP three-way
+handshake, the causes of the French Revolution, machine-learning
+overfitting, and twelve others), each with genuine associated keywords, a
+genuine correct answer, and one or more genuine incorrect answers.
+Clean and attack text alike are drawn from one shared generator with five
+distinct sentence templates (\Cref{sec:shared-generator}), scaled to 30
+documents per topic for the reported evaluation: 480 reference documents,
+217 TF-IDF dimensions.
+
+\textbf{Attack regimes (six).} Clean, standard, PIDP, collusion (minor
+and major poison counts, reported together), stealth collusion, and
+silent --- described in full in \Cref{sec:attack-simulator}.
+
+\textbf{Systems compared (six).} Vanilla RAG, DRS Only, ShieldRAG Only,
+RAGuard/ZKIP, TriShield, and OmniGuard-RAG (\Cref{sec:results}).
+
+\textbf{Evaluation modes.} A main comparison (all six systems against all
+six attack regimes) and a per-ring ablation ladder (Ring~0 alone,
+$+$Ring~1, $+$Ring~2 cohesion-only, $+$Ring~2 both signals), the latter
+deliberately excluding the Dynamic Trust Store at every step so that its
+cross-query effect cannot mask what a single ring does or does not
+contribute in isolation (\Cref{sec:ablation-results}).
+
+\textbf{Statistical rigor.} Eight independently regenerated seeds ---
+$7, 11, 23, 41, 59, 79, 97, 113$ --- 200 queries each, 1{,}600 queries per
+system in total, with every metric reported as a mean and a Student's-$t$
+95\% confidence-interval half-width (\Cref{sec:multiseed}), alongside a
+real, separately measured wall-clock orchestration latency next to the
+call-count estimate every system reports (\Cref{sec:compute-cost}).

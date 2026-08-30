@@ -1,0 +1,66 @@
+% ============================================================================
+% sections/abstract.tex
+% ============================================================================
+\begin{center}
+{\Large\bfseries\color{navy} Abstract}
+\end{center}
+\addcontentsline{toc}{section}{Abstract}
+\vspace{0.4em}
+
+Retrieval-Augmented Generation (RAG) systems answer questions by retrieving
+supporting documents from a corpus and grounding a generated answer in
+them. This architecture introduces a critical attack surface: an adversary
+who can influence either the corpus or the query can steer the system
+toward a false answer without touching the model's weights. This project
+surveys six frontier papers (2025--2026) documenting increasingly
+effective poisoning attacks --- compound query-and-corpus attacks
+(PIDP-Attack), semantically fluent detection-evading poison
+(SilentRetrieval), and coordinated multi-document collusion --- alongside
+a sequence of defenses: spectral pre-ingestion filters (DRS), query-time
+consensus reshaping (ShieldRAG / ``Push and Pull''), adversarially trained
+retrievers with counterfactual verification (RAGuard / ZKIP), and
+multi-ring defense-in-depth pipelines (TriShieldRAG). Read together, these
+works reveal that no single existing defense is sufficient: spectral
+filters lack query-time protection, single-document counterfactual
+verification is blind to colluding poison documents, and multi-ring
+pipelines can still collapse into false consensus when every stage
+evaluates the same already-poisoned retrieved context.
+
+\vspace{0.6em}
+This project implements and empirically evaluates OmniGuard-RAG, a
+four-ring defense-in-depth framework built to close these gaps: (1) a
+query-path guard that strips adversarial suffixes before retrieval, (2) a
+spectral ingestion filter with a fit/calibration-split PCA to avoid
+self-referential thresholds, (3) a risk-aware router using two independent
+signals (embedding cohesion and answer-vote contention), and (4) a
+Group-Wise Counterfactual Consensus (GWCC) mechanism that generalises
+leave-one-out verification to leave-group-out exclusion for colluding
+document cliques. A persistent, cross-query Dynamic Trust Store
+accumulates evidence about individual documents across a session. Every
+attack and every defense operates on real, generated text embedded through
+a real, fixed TF-IDF vector space --- no detection threshold is hand-set;
+every one is calibrated from measured clean-data statistics.
+
+\vspace{0.6em}
+Evaluated across 8 independently regenerated seeds (1,600 queries in
+total) against five baseline defenses under six attack regimes (clean,
+standard poisoning, PIDP, collusion, stealth collusion, and
+silent/SilentRetrieval-style poisoning), OmniGuard-RAG reaches
+$100.0\pm0.0\%$ accuracy and $0.0\pm0.0\%$ overall attack success rate,
+with stealth-collusion attack success at a small and honestly-reported
+$0.1\pm0.1\%$ --- not a fabricated perfect zero. A per-ring ablation shows
+that no single ring achieves this result alone: Group-Wise Counterfactual
+Consensus has a real, measured ceiling of roughly 8--10\% attack success
+against camouflaged collusion within a single query, and the headline
+result is reached only because the persistent trust store closes the gap
+that a single query cannot structurally close. Eight real, measured
+software bugs --- including a self-referential filter threshold and a
+consensus mechanism that was silently a no-op --- were found and fixed
+during development through direct measurement rather than parameter
+tuning, and this debugging trail is documented as part of the project's
+methodology, not hidden from it.
+
+\vspace{0.8em}
+\noindent\textbf{\color{navy}Keywords:} \textit{Retrieval-Augmented
+Generation, Data Poisoning, Defense-in-Depth, Counterfactual Consensus,
+Spectral Filtering, Adversarial Robustness, TF-IDF Retrieval.}

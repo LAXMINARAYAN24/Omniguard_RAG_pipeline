@@ -1,0 +1,93 @@
+% ============================================================================
+% sections/appendix.tex
+% ============================================================================
+\appendix
+\section*{Appendix}
+\addcontentsline{toc}{section}{Appendix}
+\renewcommand{\thesubsection}{\Alph{subsection}}
+
+\subsection{Acronyms}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{0.7\textwidth}{@{}l Y@{}}
+\toprule
+\textbf{Acronym} & \textbf{Expansion} \\
+\midrule
+RAG & Retrieval-Augmented Generation \\
+ASR & Attack Success Rate \\
+DRS & Directional Relative Shifts \\
+PIDP & Prompt Injection with Database Poisoning \\
+ZKIP & Zero-Knowledge Inference Patch \\
+GWCC & Group-Wise Counterfactual Consensus \\
+LOO & Leave-One-Out \\
+LPO & Leave-Pair-Out \\
+CBS & Coordinated Beam Search \\
+CATG & Context-Adaptive Trigger Generation \\
+TF-IDF & Term Frequency--Inverse Document Frequency \\
+LSA & Latent Semantic Analysis \\
+SVD & Singular Value Decomposition \\
+PCA & Principal Component Analysis \\
+CI & Confidence Interval \\
+FPR & False Positive Rate \\
+\bottomrule
+\end{tabularx}
+\caption{Acronyms used in this report.}
+\label{tab:acronyms}
+\end{table}
+
+\subsection{Reference Papers Selected for Implementation}
+
+\begin{table}[htbp]
+\centering
+\scriptsize
+\begin{tabularx}{\textwidth}{@{}c l l Y@{}}
+\toprule
+\textbf{\#} & \textbf{Paper} & \textbf{File(s) in \texttt{claude/}} & \textbf{Role in Project} \\
+\midrule
+1 & DRS & \texttt{12614\_Understanding\_Data\_Poiso.pdf}, \texttt{DRS.md} & Ring~1 spectral filter design; fit/calibration-split methodology \\
+2 & ShieldRAG & \texttt{PushandPull.pdf}, \texttt{PushandPull.md} & Baseline implementation; demonstrated majority-vote limitation \\
+3 & RAGuard & \texttt{RAGuard.pdf}, \texttt{RAGuard.md} & Ring~3 GWCC inspiration (LOO $\rightarrow$ leave-group-out); collusion blind spot \\
+4 & TriShieldRAG & \texttt{TriShield.pdf}, \texttt{TriShield.md} & Ring~1 lexical formulas; false-consensus result $\rightarrow$ dual-signal Ring~2 \\
+5 & PIDP-Attack & \texttt{PIDP.pdf}, \texttt{PIDP.md} & Attack regime implementation (query suffix $+$ attractor cluster) \\
+6 & SilentRetrieval & \texttt{SilentRetrieval.pdf}, \texttt{SilentRetrieval.md} & Stealth-collusion attack design (CATG query targeting) \\
+\bottomrule
+\end{tabularx}
+\caption{Reference papers selected for implementation, mapped to project files.}
+\label{tab:paper-mapping}
+\end{table}
+
+\subsection{Project File Structure}
+
+For orientation only --- see \Cref{sec:architecture} for the ring-to-module
+mapping and \Cref{sec:devenv} for the development environment.
+
+\begin{small}
+\begin{verbatim}
+Practical_Training/
+|-- unified_rag_defense/            # Core package, 14 modules
+|   |-- query_guard.py              # Ring 0
+|   |-- drs_filter.py               # Ring 1 (fit/calib.-split DRS)
+|   |-- risk_router.py              # Ring 2 (cohesion + contention)
+|   |-- gwcc_consensus.py           # Ring 3 (leave-group-out)
+|   |-- omniguard_pipeline.py       # Pipeline + Trust Store
+|   |-- attack_simulator.py         # Six attack regimes
+|   |-- baselines.py                # Five baseline systems
+|   |-- bench_common.py             # World-building, query loop
+|   |-- stats_utils.py              # Student's-t confidence intervals
+|   |-- ablations.py                # Per-ring ablation ladder
+|   `-- text_gen.py, retrieval.py, corpus.py, topics_data.py,
+|       metrics.py, __init__.py
+|-- run_omniguard_benchmark.py      # Single-seed benchmark
+|-- run_full_evaluation.py          # 8-seed eval. + ablation ladder,
+|                                    # checkpointed
+|-- run_embedding_comparison.py     # Future work: TF-IDF vs. LSA
+|-- run_gwcc_diagnostic.py          # Ring 3 mechanism verification
+|-- results/                        # path_a_report.md, raw JSON,
+|                                    # findings logs
+|-- README.md, RUN_MANUAL.md, walkthrough.md
+`-- claude/                         # Reference papers (PDF + MD)
+                                     # and dev logs
+\end{verbatim}
+\end{small}

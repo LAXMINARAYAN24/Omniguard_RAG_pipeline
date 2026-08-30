@@ -1,0 +1,117 @@
+% ============================================================================
+% sections/sec1_introduction.tex
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Challenges}
+\label{sec:challenges}
+
+Retrieval-Augmented Generation systems have become the dominant
+architecture for grounding large language models in external, verifiable
+knowledge: a retriever pulls the top-$k$ most relevant passages from a
+corpus for a given query, and a generator conditions its answer on that
+retrieved context. This design reduces hallucination and lets a model
+answer questions about private or fast-changing information it never saw
+during training. However, the retrieval component introduces an attack
+surface that does not exist in a standalone LLM deployment, and this
+project's literature survey (\Cref{sec:literature}) identifies five
+distinct, paper-documented forms it takes.
+
+\begin{description}[leftmargin=0pt,style=nextline,font=\bfseries\color{navy}]
+\item[Corpus poisoning attacks.] An adversary who can insert documents
+  into the retrieval corpus --- through user-submitted content, a
+  compromised data pipeline, or a supply-chain attack on a shared
+  knowledge base --- can plant false claims that the retriever will
+  faithfully surface as if they were genuine evidence. The literature on
+  this family of attacks (PoisonedRAG and its successors) shows that as
+  few as five well-placed documents can flip an undefended system's
+  answer with over 90\% success.
+
+\item[Compound query-and-corpus attacks (PIDP).] The PIDP-Attack combines
+  a runtime query prompt-injection with universal corpus poisoning in a
+  single attack: a malicious suffix appended to the user's query steers
+  retrieval toward attacker-planted ``attractor'' documents in the
+  corpus, without needing prior knowledge of the victim's exact query
+  text. A defense that only screens the corpus, or only screens the
+  query, is structurally blind to one half of this attack.
+
+\item[Collusion and coordinated multi-document poisoning.] Multiple
+  poison documents can corroborate the same false claim. RAGuard's own
+  paper states this plainly as a limitation of single-document
+  leave-one-out (LOO) counterfactual verification: if document A and
+  document B both support the same wrong answer, removing either one
+  alone leaves the other intact, the answer does not change, and neither
+  document is flagged.
+
+\item[Semantically fluent, stealth poisoning (SilentRetrieval).]
+  SilentRetrieval introduces a two-stage construction --- Coordinated
+  Beam Search (CBS) and Context-Adaptive Trigger Generation (CATG) ---
+  that produces poison text which is linguistically fluent, statistically
+  close to clean content in embedding space, and deliberately tailored to
+  the anticipated query. Such text is close to indistinguishable from
+  genuine content to a perplexity filter, a lexical screen, or an
+  embedding-outlier detector.
+
+\item[False consensus in layered defenses (TriShieldRAG).] TriShieldRAG's
+  own reported negative result is the most important one for this
+  project's design: even a three-ring, defense-in-depth pipeline
+  collapses once an attack targets the shared retrieved context every
+  ring inspects --- cross-model agreement can remain high while attack
+  success also remains high, because every model in the panel is voting
+  on the same already-poisoned evidence. Agreement is not the same thing
+  as correctness.
+\end{description}
+
+\subsubsection*{The gap: no unified, honestly-evaluated defense}
+
+Each of the six surveyed papers addresses a subset of these threats, but
+their defenses operate in isolation, adopt different assumptions about
+what the attacker can and cannot do, and are evaluated on different
+corpora, different attack constructions, and different metrics. No single
+framework in the surveyed literature composes complementary signals
+across the full RAG pipeline --- query, corpus, retrieval, and generation
+--- under one honest, reproducible evaluation harness that reports both
+successes and residual failure rates. Closing that specific gap is this
+project's stated objective (\Cref{sec:objectives}).
+
+\subsection{Motivation for the Work}
+\label{sec:motivation}
+
+The motivation for undertaking this project is three-fold.
+
+\begin{enumerate}
+\item \textbf{Close the documented gaps.} Each prior defense has a
+  paper-stated blind spot, and this project's architecture is built so
+  the weakness of one mechanism becomes the input signal for the next:
+  DRS detects geometric anomalies at ingestion but has no query-time
+  protection, so Ring~0 adds query screening ahead of it. ShieldRAG's
+  push-pull reshaping assumes benign content holds the majority, which
+  collusion defeats, so Ring~2 adds an answer-contention signal that does
+  not assume majority correctness. RAGuard's leave-one-out fails against
+  collusion, so Ring~3 generalises it to leave-group-out. TriShield's
+  rings can collapse together under shared context, so a persistent,
+  cross-query Dynamic Trust Store adds a memory that a single query does
+  not have.
+
+\item \textbf{Honest, reproducible evaluation.} An early version of this
+  project produced a suspiciously perfect ``0\% attack success rate''
+  headline by over-blocking, which dropped clean-query accuracy to only
+  20\% --- a defense that refuses almost everything is not a usable
+  result, honest or otherwise. Rebuilding the evaluation around measured
+  clean-data statistics, held-out calibration splits, multi-seed
+  confidence intervals, and an explicit per-ring ablation replaced that
+  artifact with genuinely earned numbers, including a final
+  stealth-collusion attack success rate of 0.1\% rather than an
+  unexamined 0.0\%.
+
+\item \textbf{Discover genuinely new insights, not only implement cited
+  ones.} The dual-signal risk router (embedding cohesion together with
+  answer-vote contention) was not part of the original design; it
+  emerged directly from measuring that cohesion-only routing is
+  structurally blind to an attack optimised on the answer axis rather
+  than the geometry axis --- precisely the failure mode TriShieldRAG's
+  own paper documents as ``false consensus.'' This architectural insight
+  does not depend on the TF-IDF embedding space used for evaluation here
+  and should transfer to a dense neural retriever as well.
+\end{enumerate}

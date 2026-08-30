@@ -1,0 +1,184 @@
+% ============================================================================
+% main.tex — OmniGuard-RAG Practical Training Report
+%
+% This is the file that was MISSING from the uploaded set: every section,
+% figure, and the references/appendix already existed as separate .tex/.png
+% files, but nothing tied them together into a compilable document. This
+% file is that missing piece.
+%
+% Compile with: pdflatex main.tex  (run 3 times, or use latexmk -pdf main.tex,
+% so cross-references \Cref{...}, the Table of Contents, List of Figures,
+% and List of Tables all resolve correctly)
+%
+% Requires the CTAN "import" package (\usepackage{import}), used below
+% exactly as requested, to pull in every file under sections/.
+% ============================================================================
+
+\documentclass[12pt,a4paper]{article}
+
+% ---------------------------------------------------------------------------
+% Page geometry — 1 inch margins on all four sides (NITK IT440/IT447 guideline)
+% ---------------------------------------------------------------------------
+\usepackage[left=1in,right=1in,top=1in,bottom=1in]{geometry}
+
+% ---------------------------------------------------------------------------
+% Fonts — Times body text. mathptmx is the standard Times-metric-compatible
+% LaTeX substitute (true "Times New Roman" is not a LaTeX-native font); it
+% covers both text and math so \pm, \times, etc. render in a matching style.
+% ---------------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{mathptmx}
+\usepackage[english]{babel}
+\usepackage{microtype} % improves justification quality for 12pt justified body text
+\setlength{\emergencystretch}{3em} % absorbs long unbreakable inline \texttt{...} tokens
+                                    % (e.g. RISK_THRESHOLD = 0.55) without an overfull hbox,
+                                    % purely typographic -- does not alter any section's content
+
+% ---------------------------------------------------------------------------
+% Line/paragraph spacing — guideline specifies "1.5 spacing" for body text.
+% \onehalfspacing (setspace) is the standard interpretation of this rule.
+% ---------------------------------------------------------------------------
+\usepackage{setspace}
+\onehalfspacing
+
+% ---------------------------------------------------------------------------
+% Colour palette — matches scripts/make_fig1_architecture.py exactly (NAVY,
+% SLATE, GOLD constants), so the title page and inline \ringcode / label
+% styling are visually consistent with the three figures.
+% ---------------------------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{navy}{HTML}{1F3864}
+\definecolor{slate}{HTML}{44546A}
+\definecolor{gold}{HTML}{B08D57}
+
+% ---------------------------------------------------------------------------
+% Section/heading styling per the NITK guideline:
+%   Heading 1 (\section)       — Times 16pt, bold, centered, numbered "1."
+%   Heading 2 (\subsection)    — Times 14pt, bold, italic, left, numbered "1.1"
+%   Sub-subheading (\subsubsection) — Times 12pt, bold, left, numbered "1.1.1"
+% article class's native numbering already produces "1", "1.1", "1.1.1", so
+% only the visual formatting is customised here via titlesec.
+% ---------------------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}
+  {\centering\fontsize{16}{19}\selectfont\bfseries\color{navy}}
+  {\thesection.}{0.6em}{}
+\titlespacing*{\section}{0pt}{*3}{*3} % approx. "leave 2 blank lines (12pt) after heading"
+
+\titleformat{\subsection}
+  {\raggedright\fontsize{14}{17}\selectfont\bfseries\itshape\color{navy}}
+  {\thesubsection.}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{*2}{*1.5}
+
+\titleformat{\subsubsection}
+  {\raggedright\fontsize{12}{14}\selectfont\bfseries}
+  {\thesubsubsection.}{0.6em}{}
+\titlespacing*{\subsubsection}{0pt}{*1.5}{*1}
+
+\setcounter{secnumdepth}{3} % number down to subsubsection
+\setcounter{tocdepth}{3}    % ...and list them in the Table of Contents
+
+% ---------------------------------------------------------------------------
+% Tables and figures
+% ---------------------------------------------------------------------------
+\usepackage{graphicx}      % \includegraphics, \resizebox (already used in sec5_results.tex)
+\usepackage{array}
+\usepackage{tabularx}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X} % 'Y' column type used throughout the section files
+\usepackage{booktabs}      % \toprule \midrule \bottomrule
+
+% Captions: Times 10pt, bold, centered (guideline). Figure captions render
+% below the figure and table captions above the table simply because that is
+% where \caption is placed in each section file's source — this package only
+% controls the font/alignment.
+\usepackage{caption}
+\captionsetup{font={bf,footnotesize},labelfont={bf},justification=centering,labelsep=colon}
+
+% ---------------------------------------------------------------------------
+% Lists, quotes, cross-references
+% ---------------------------------------------------------------------------
+\usepackage{enumitem}   % powers the [leftmargin=...,style=nextline,...] options
+                        % already used on \description and \enumerate in the section files
+\usepackage{csquotes}   % \enquote{...}, used in sec2_literature.tex
+\usepackage{amsmath}    % general math support
+
+% hyperref must be loaded before cleveref. hidelinks keeps the PDF print-safe
+% (no coloured boxes around cross-references/citations), consistent with the
+% guideline's binding/printing instructions.
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={OmniGuard-RAG: A Four-Ring Defense-in-Depth Framework Against Retrieval Poisoning},
+  pdfauthor={},
+  pdfsubject={Practical Training Report, IT488},
+  pdfkeywords={Retrieval-Augmented Generation, Data Poisoning, Defense-in-Depth}
+}
+\usepackage[capitalise,noabbrev]{cleveref} % \Cref{...} used throughout every section file
+
+% ---------------------------------------------------------------------------
+% Custom commands relied on by the section files (defined here, once, so
+% every section can use them without redefinition):
+%   \ringcode{...}   — styled inline code for module filenames, e.g.
+%                       \ringcode{query_guard.py}
+%   \pmci{X}{Y}       — "X±Y%", used for every accuracy/ASR figure in Table 4/5
+%   \pmciv{X}{Y}      — "X±Y" (no percent sign), used for call-count/latency
+%                        figures in Table 6, which are not percentages
+% ---------------------------------------------------------------------------
+\newcommand{\ringcode}[1]{\textcolor{navy}{\texttt{#1}}}
+\newcommand{\pmci}[2]{\mbox{$#1\pm#2\%$}}   % \mbox: keeps "X±Y%" from breaking across lines in narrow table cells
+\newcommand{\pmciv}[2]{\mbox{$#1\pm#2$}}
+
+% ---------------------------------------------------------------------------
+% No headers or footers; default (bottom-centre) page numbering only.
+% article's built-in "plain" page style already does exactly this.
+% ---------------------------------------------------------------------------
+\pagestyle{plain}
+
+% ---------------------------------------------------------------------------
+% Import the section files. \import{<path>/}{<filename>} (CTAN "import"
+% package), as requested.
+% ---------------------------------------------------------------------------
+\usepackage{import}
+
+\begin{document}
+
+% ---- Title page (unnumbered) ----
+\import{sections/}{title.tex}
+
+% ---- Front matter: roman numerals (i, ii, iii, ...) ----
+\pagenumbering{roman}
+\setcounter{page}{1}
+
+\import{sections/}{abstract.tex}
+\clearpage
+
+\tableofcontents
+\clearpage
+\listoffigures
+\clearpage
+\listoftables
+\clearpage
+
+% ---- Main matter: arabic numerals restart at 1 ----
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\import{sections/}{sec1_introduction.tex}
+\import{sections/}{sec2_literature.tex}
+\import{sections/}{sec3_methodology.tex}
+\import{sections/}{sec4_workdone.tex}
+\import{sections/}{sec5_results.tex}
+\import{sections/}{sec6_conclusion.tex}
+
+% References: 10pt Times (guideline), applied only around this section so it
+% doesn't affect the 12pt body text elsewhere.
+\clearpage
+\begingroup
+\fontsize{10}{12}\selectfont
+\import{sections/}{references.tex}
+\endgroup
+
+\clearpage
+\import{sections/}{appendix.tex}
+
+\end{document}

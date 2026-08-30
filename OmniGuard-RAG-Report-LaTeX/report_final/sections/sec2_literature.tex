@@ -1,0 +1,228 @@
+% ============================================================================
+% sections/sec2_literature.tex
+% ============================================================================
+\section{Literature Survey}
+\label{sec:literature}
+
+\subsection{Introduction to Literature Survey}
+
+This survey covers six papers (2025--2026) that, together, define a
+working threat model and defense landscape for retrieval poisoning in RAG
+systems: a foundational spectral defense (DRS), a query-time reshaping
+defense (ShieldRAG), a two-layer adversarial-training-plus-counterfactual
+defense (RAGuard/ZKIP), a compound query-and-corpus attack (PIDP-Attack),
+a stealth fluency-preserving attack (SilentRetrieval), and a three-ring
+layered defense with an explicitly reported negative result
+(TriShieldRAG). All six were verified against the actual paper text (not
+a secondary summary) before being cited in this report; exact identifiers
+appear in the References section.
+
+\subsection{Related Work}
+
+\subsubsection{DRS --- Directional Relative Shifts (ICLR 2025, under double-blind review)}
+
+``Understanding Data Poisoning Attacks for RAG: Insights and Algorithms''
+observes that effective poisoning attacks tend to create unusually large
+shifts along the directions in which the clean-data distribution has the
+smallest variance. Building on that insight, the paper proposes DRS
+(Directional Relative Shifts): fit a PCA subspace on a trusted reference
+corpus, identify the lowest-variance directions, and flag any document
+whose projection onto those directions is abnormally large. Its stated
+strengths are a principled statistical foundation and stronger filtering
+than perplexity-, Euclidean-distance-, or embedding-norm-based baselines
+in the paper's own medical-RAG evaluation setting. Its stated limitations
+are a targeted-query assumption that weakens as the query space grows,
+the fact that it only screens documents at ingestion and never assesses
+whether the answer eventually produced is itself trustworthy, and a
+measured roughly 15\% drop in detection under an adaptively-regularised
+poison.
+
+\subsubsection{ShieldRAG --- ``Push and Pull'' (ACM Transactions on Information Systems, 2026)}
+
+``Push and Pull: Defending against Retrieval Poisoning Attacks via
+Embedding Space Reshaping'' proposes reshaping the retrieval embedding
+space at query time: push the query embedding away from
+minority/suspicious signals and pull it toward majority/benign signals,
+using a sliding-window explanation mechanism, keyword aggregation, and
+query-targeting optimisation. Its stated strength is that it requires no
+modification to the corpus and operates purely at query time. Its stated
+limitation, acknowledged directly in the paper, is that the whole
+mechanism assumes benign information is the majority of what is
+retrieved --- under collusion (two or more poison documents), the
+malicious side can itself become the majority, at which point
+majority-consensus reshaping reinforces the wrong answer instead of
+correcting it. This project's own baseline implementation of ShieldRAG
+reproduces that limitation directly: measured across every attacked case
+in this evaluation, ShieldRAG-only never once diverges from plain Vanilla
+RAG's answer (0 divergent outcomes), because push-pull reweighting only
+reinforces whichever answer already holds the plurality and has no
+external signal telling it that plurality might be wrong.
+
+\subsubsection{RAGuard / ZKIP (arXiv:2607.26339, 2026)}
+
+``RAGuard: A Layered Defense Framework for Retrieval-Augmented Generation
+Systems Against Data Poisoning'' combines two layers: an adversarially
+fine-tuned dense retriever that learns to downrank passages resembling
+synthetic poison, and the Zero-Knowledge Inference Patch (ZKIP) --- a
+label-free, black-box, leave-one-out filter that decodes a reference
+answer with the full retrieved context, decodes again with one document
+removed, and flags that document if its removal substantially shifts the
+answer's semantics or reduces the model's output-entropy. ZKIP needs no
+poison labels, no gold answers, and no model internals, and the paper
+reports it drives measured attack success to 0.000 in every defended
+configuration it tests. The paper is equally direct about ZKIP's own
+limitation, naming it explicitly as the central known weakness of
+single-pass ZKIP: \enquote{When two or more poisons in the top-$k$ assert
+the same false fact, removing any one leaves the answer unchanged; the
+LOO signal for each is muted and no document is flagged.} This project's
+Ring~3 (\Cref{sec:ring3}) is a direct response to that stated gap.
+
+\subsubsection{PIDP-Attack (arXiv:2603.25164, 2026)}
+
+``PIDP-Attack: Combining Prompt Injection with Database Poisoning Attacks
+on Retrieval-Augmented Generation Systems'' demonstrates a compound
+attack that pairs a runtime query-path prompt injection with corpus-path
+poisoning, so that neither surface alone needs to succeed --- the query
+suffix steers retrieval toward the poisoned documents, and the poisoned
+documents then carry the false claim into the generator's context. Its
+significance for this project is architectural rather than defensive: it
+is the direct justification for treating the query path (Ring~0) as a
+first-class, independently-screened surface rather than trusting that
+corpus-side defenses alone are sufficient.
+
+\subsubsection{SilentRetrieval (ACM SIGKDD 2026 / arXiv:2605.28074)}
+
+``SilentRetrieval: Hijacking Retrieval-Augmented Generation via
+Semantically-Preserving Adversarial Data Poisoning'' introduces a
+two-stage stealth construction: Coordinated Beam Search (CBS), a
+multi-token joint optimisation that keeps a topically relevant host
+document retrievable after a payload is inserted while constraining its
+perplexity, followed by Context-Adaptive Trigger Generation (CATG), which
+uses a frozen LLM to fuse a trigger naturally into the document's own
+content. Under a one-poisoned-document-per-query evaluation on Natural
+Questions, the paper reports high retrieval hit-rates (84.6\% / 81.3\%
+HR@10 across two settings) together with substantial attack success at
+near-benign perplexity. Its stated limitation is a white-box assumption
+--- CBS needs gradient access to the retriever --- and evaluation on a
+single dataset family. This project's ``stealth collusion'' attack
+regime (\Cref{sec:attack-simulator}) is directly inspired by
+SilentRetrieval's core idea --- camouflage indistinguishable from genuine
+content --- adapted to a TF-IDF rather than a gradient-optimised setting,
+since this project's environment has no route to a live embedding model
+to attack with gradients.
+
+\subsubsection{TriShieldRAG (arXiv:2607.23838, 2026)}
+\label{sec:trishield-lit}
+
+``TriShieldRAG: 3 Rings, One Blind Spot in Layered Defenses for
+Retrieval-Augmented Generation'' proposes a three-ring, defense-in-depth
+pipeline: an Ingest Guard that screens each candidate document with a
+combined perplexity/repetition score, a boilerplate pattern-match score,
+and an embedding-outlier score; a Retrieval Scorer that re-ranks the
+surviving top-$k$ by a provenance-and-consistency-weighted trust score;
+and a Cross-LLM Consensus stage that polls a panel of architecturally
+diverse language models and allows one bounded re-retrieval on
+disagreement. Evaluated against a non-adaptive PoisonedRAG-style attacker
+over a 5,000-document knowledge base, the full pipeline reduces attack
+success from roughly 91\% to roughly 13\%. The paper's most important
+contribution for this project, however, is a negative result stated as
+plainly as the positive one: agreement across the model panel is not the
+same thing as correctness, since if every model in the panel is shown the
+same poisoned retrieved context, a high agreement score and a high
+attack-success rate can occur together. \Cref{sec:ring2} shows how this
+project's own Ring~2 was redesigned specifically around that finding.
+
+\subsection{Outcome of Literature Review}
+
+Reading the six papers as a set, rather than in isolation, exposes a
+consistent pattern: every one relies on a single primary signal, and
+every one has a critical, paper-stated blind spot along a different
+axis. No individual signal --- geometric anomaly, majority consensus,
+single-document counterfactual influence, or cross-model agreement --- is
+sufficient on its own.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l Y Y@{}}
+\toprule
+\textbf{Paper} & \textbf{Primary Signal} & \textbf{Critical Blind Spot} \\
+\midrule
+DRS & Embedding-geometry anomaly at ingestion (low-variance-direction shift) & No query-time protection; the paper's own adaptive-attack experiment shows DRS-regularised poisoning reduces detection by roughly 15\% while keeping the attack effective \\
+ShieldRAG (Push and Pull) & Query-time majority-consensus reshaping of the embedding space & Assumes benign information holds the majority; once poison documents form the majority the mechanism reshapes toward the poisoned consensus instead of away from it \\
+RAGuard / ZKIP & Single-document leave-one-out counterfactual influence on the decoded answer & Blind to coordinated multi-document collusion --- removing one colluding document alone leaves the others' corroboration intact \\
+PIDP-Attack & Dual-path attack combining a query-suffix trigger with corpus poisoning & Not a defense --- its significance is that a defense must protect the query path and the corpus path simultaneously, or the untouched path defeats it \\
+SilentRetrieval & Fluency- and query-adaptive stealth poison (CBS + CATG) & Requires white-box access to the retriever's gradients to construct CBS triggers; defenses tuned only to catch obvious lexical or perplexity anomalies miss it by construction \\
+TriShieldRAG & Three-ring layered defense (ingest guard, retrieval scorer, cross-model consensus) & ``False consensus'' --- the paper's own reported condition where cross-model agreement stays high while attack success also stays high, because every ring evaluates the same poisoned retrieved context \\
+\bottomrule
+\end{tabularx}
+\caption{Six surveyed papers --- primary signal and critical blind spot.}
+\label{tab:literature}
+\end{table}
+
+The key synthesis this project draws from \Cref{tab:literature} is that a
+defense must combine independent, complementary signals at different
+pipeline stages --- query, corpus, retrieval, and generation --- and must
+be honest about the fact that some camouflaged attacks are, within a
+single query's information content, structurally indistinguishable from
+genuine agreement. That last point turns out, in \Cref{sec:results}, to
+be more than a theoretical caveat: it is measured directly in this
+project's own results.
+
+\subsection{Problem Statement}
+
+\textbf{Given} a RAG system whose retrieval corpus is vulnerable to (a)
+standard single-document poisoning, (b) compound query-suffix-plus-corpus
+poisoning (PIDP-style), (c) coordinated multi-document collusion, (d)
+semantically fluent stealth collusion (SilentRetrieval-style camouflage
+with no lexical tell), and (e) a single silently-camouflaged poison
+document, \textbf{the problem} addressed by this project is to design,
+implement, and empirically evaluate a defense framework that:
+
+\begin{enumerate}
+\item operates on real text with a real, fixed embedding space --- no
+  synthetic noise vectors and no hand-tuned ``evasion bias'' parameters
+  standing in for a detector's actual behaviour;
+\item detects and measurably mitigates all five attack types listed
+  above, individually and not only in aggregate;
+\item calibrates every threshold from measured, held-out clean-data
+  statistics rather than adjusting a parameter until a target headline
+  number appears;
+\item reports honest residual limitations --- including non-zero attack
+  success where it genuinely occurs --- rather than presenting a
+  suspiciously perfect result;
+\item provides a per-component ablation showing which specific mechanism
+  is responsible for which part of the final result; and
+\item uses a multi-seed statistical methodology (independent corpora,
+  confidence intervals) rather than a single run.
+\end{enumerate}
+
+\subsection{Research Objectives}
+\label{sec:objectives}
+
+\begin{enumerate}
+\item[\textbf{O1}] --- Implement a four-ring defense pipeline
+  (OmniGuard-RAG) in which each ring is a direct, traceable response to
+  one specific gap identified in \Cref{sec:literature}.
+\item[\textbf{O2}] --- Implement five baseline defenses (Vanilla RAG,
+  DRS-only, ShieldRAG-only, RAGuard/ZKIP, TriShield) inside one common
+  evaluation framework, so the comparison in \Cref{sec:results} is fair
+  --- every system sees the same corpus, the same queries, and the same
+  attacks.
+\item[\textbf{O3}] --- Construct five realistic attack regimes (standard,
+  PIDP, collusion, stealth collusion, silent) using query-targeted,
+  factually-grounded poison generation rather than abstract placeholder
+  text.
+\item[\textbf{O4}] --- Conduct a multi-seed evaluation (8 independent
+  seeds $\times$ 200 queries = 1,600 queries per system) reporting mean
+  $\pm$ 95\% confidence interval for every metric.
+\item[\textbf{O5}] --- Perform a per-ring ablation ladder that isolates
+  each ring's individual contribution, deliberately excluding the
+  persistent trust store so it cannot mask a ring's own limitation.
+\item[\textbf{O6}] --- Report both an LLM-call-count estimate and a
+  real, measured wall-clock orchestration latency for every system, since
+  \Cref{sec:compute-cost} shows the two do not always agree.
+\item[\textbf{O7}] --- Document every bug found and fixed during
+  development, with its root cause and how it was measured, as part of
+  the project's own methodology rather than as an appendix afterthought.
+\end{enumerate}
