@@ -11,7 +11,7 @@
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{0.7\textwidth}{@{}l Y@{}}
+\begin{tabularx}{0.75\textwidth}{@{}l Y@{}}
 \toprule
 \textbf{Acronym} & \textbf{Expansion} \\
 \midrule
@@ -21,8 +21,10 @@ DRS & Directional Relative Shifts \\
 PIDP & Prompt Injection with Database Poisoning \\
 ZKIP & Zero-Knowledge Inference Patch \\
 GWCC & Group-Wise Counterfactual Consensus \\
-LOO & Leave-One-Out \\
+LOO / LGO & Leave-One-Out / Leave-Group-Out \\
 LPO & Leave-Pair-Out \\
+NLI & Natural Language Inference \\
+CoV & Chain-of-Verification \\
 CBS & Coordinated Beam Search \\
 CATG & Context-Adaptive Trigger Generation \\
 TF-IDF & Term Frequency--Inverse Document Frequency \\
@@ -31,6 +33,8 @@ SVD & Singular Value Decomposition \\
 PCA & Principal Component Analysis \\
 CI & Confidence Interval \\
 FPR & False Positive Rate \\
+CORS & Cross-Origin Resource Sharing \\
+CSP & Content Security Policy \\
 \bottomrule
 \end{tabularx}
 \caption{Acronyms used in this report.}
@@ -44,9 +48,9 @@ FPR & False Positive Rate \\
 \scriptsize
 \begin{tabularx}{\textwidth}{@{}c l l Y@{}}
 \toprule
-\textbf{\#} & \textbf{Paper} & \textbf{File(s) in \texttt{claude/}} & \textbf{Role in Project} \\
+\textbf{\#} & \textbf{Paper} & \textbf{File(s) in \texttt{docs/literature/}} & \textbf{Role in Project} \\
 \midrule
-1 & DRS & \texttt{12614\_Understanding\_Data\_Poiso.pdf}, \texttt{DRS.md} & Ring~1 spectral filter design; fit/calibration-split methodology \\
+1 & DRS & \texttt{DRS.pdf}, \texttt{DRS.md} & Ring~1 spectral filter design; fit/calibration-split methodology \\
 2 & ShieldRAG & \texttt{PushandPull.pdf}, \texttt{PushandPull.md} & Baseline implementation; demonstrated majority-vote limitation \\
 3 & RAGuard & \texttt{RAGuard.pdf}, \texttt{RAGuard.md} & Ring~3 GWCC inspiration (LOO $\rightarrow$ leave-group-out); collusion blind spot \\
 4 & TriShieldRAG & \texttt{TriShield.pdf}, \texttt{TriShield.md} & Ring~1 lexical formulas; false-consensus result $\rightarrow$ dual-signal Ring~2 \\
@@ -54,7 +58,7 @@ FPR & False Positive Rate \\
 6 & SilentRetrieval & \texttt{SilentRetrieval.pdf}, \texttt{SilentRetrieval.md} & Stealth-collusion attack design (CATG query targeting) \\
 \bottomrule
 \end{tabularx}
-\caption{Reference papers selected for implementation, mapped to project files.}
+\caption{Reference papers selected for implementation, mapped to project literature files.}
 \label{tab:paper-mapping}
 \end{table}
 
@@ -63,31 +67,44 @@ FPR & False Positive Rate \\
 For orientation only --- see \Cref{sec:architecture} for the ring-to-module
 mapping and \Cref{sec:devenv} for the development environment.
 
-\begin{small}
+\begin{scriptsize}
 \begin{verbatim}
 Practical_Training/
-|-- unified_rag_defense/            # Core package, 14 modules
-|   |-- query_guard.py              # Ring 0
-|   |-- drs_filter.py               # Ring 1 (fit/calib.-split DRS)
-|   |-- risk_router.py              # Ring 2 (cohesion + contention)
-|   |-- gwcc_consensus.py           # Ring 3 (leave-group-out)
-|   |-- omniguard_pipeline.py       # Pipeline + Trust Store
-|   |-- attack_simulator.py         # Six attack regimes
-|   |-- baselines.py                # Five baseline systems
-|   |-- bench_common.py             # World-building, query loop
-|   |-- stats_utils.py              # Student's-t confidence intervals
-|   |-- ablations.py                # Per-ring ablation ladder
-|   `-- text_gen.py, retrieval.py, corpus.py, topics_data.py,
-|       metrics.py, __init__.py
-|-- run_omniguard_benchmark.py      # Single-seed benchmark
-|-- run_full_evaluation.py          # 8-seed eval. + ablation ladder,
-|                                    # checkpointed
-|-- run_embedding_comparison.py     # Future work: TF-IDF vs. LSA
-|-- run_gwcc_diagnostic.py          # Ring 3 mechanism verification
-|-- results/                        # path_a_report.md, raw JSON,
-|                                    # findings logs
-|-- README.md, RUN_MANUAL.md, walkthrough.md
-`-- claude/                         # Reference papers (PDF + MD)
-                                     # and dev logs
+|-- omniguard_production/           # Enterprise Production Control Plane
+|   |-- gateway/query_guard.py      # Ring 0: Repetition & injection screening
+|   |-- embeddings/drs_engine.py    # Ring 1: Spectral SVD fit/calibration filter
+|   |-- claims/nli_verifier.py      # Ring 2: Semantic NLI contention scoring
+|   |-- consensus/lgo_analyzer.py   # Ring 3: Graph-theoretic LGO consensus
+|   |-- generation/                 # CoV grounding & 5-state abstention
+|   |   |-- cov_grounding.py        # Claim cross-examination & citation hashes
+|   |   `-- abstention_engine.py    # 5-state calibrated abstention engine
+|   |-- trust/                      # Cross-query tenant-scoped Trust Ledger
+|   |   |-- trust_store.py          # Dynamic penalty & decay tracking
+|   |   `-- provenance.py           # Cryptographic doc chunk metadata
+|   `-- pipeline.py                 # End-to-end Enterprise RAG orchestrator
+|-- dashboard/                      # Interactive Web Studio & Telemetry
+|   |-- dashboard_server.py         # Multi-threaded secure REST API server
+|   |-- llm_client.py               # Universal LLM client (Ollama/OpenAI/Builtin)
+|   |-- rag_defense_engine.py       # Deep telemetry capture & sandbox bridge
+|   `-- static/                     # Single Page App (HTML5/CSS3/ES6)
+|       |-- index.html              # Modern multi-turn chat interface
+|       |-- styles.css              # Dark/light theme & telemetry drawer
+|       `-- app.js                  # Reactive state & live poison simulator
+|-- unified_rag_defense/            # Academic Baselines & Research Package
+|   |-- drs_filter.py, risk_router.py, gwcc_consensus.py, baselines.py,
+|   |   attack_simulator.py, corpus.py, topics_data.py, bench_common.py
+|-- benchmarks/                     # Evaluation & Diagnostic Benchmarking Suite
+|   |-- run_omniguard_benchmark.py  # 6-system x 7-regime benchmark dispatcher
+|   |-- run_full_evaluation.py      # 8-seed multi-run statistical evaluation
+|   |-- run_gwcc_diagnostic.py      # Ring 3 mechanism diagnostic runner
+|   `-- automate_verification.py    # Automated end-to-end test runner
+|-- tests/test_production_pipeline.py# Integration test suite for control plane
+|-- docs/                           # Documentation, Literature & Reports
+|   |-- literature/                 # 6 Research papers (PDFs & markdown notes)
+|   |-- latex_report/               # Publication-ready LaTeX report & figures
+|   `-- RUN_MANUAL.md               # User execution & deployment guide
+|-- results/                        # Multi-seed raw JSONs & markdown reports
+|-- run_dashboard.py                # Top-level interactive dashboard launcher
+`-- run_benchmark.py                # Top-level unified benchmark CLI
 \end{verbatim}
-\end{small}
+\end{scriptsize}

@@ -73,3 +73,13 @@ Base_paper/
 Skills/
 OmniGuard-RAG-Report-Latex/
 Hugging Face.txt
+
+# LaTeX build artifacts (keep PDF)
+docs/latex_report/*.aux
+docs/latex_report/*.lof
+docs/latex_report/*.lot
+docs/latex_report/*.out
+docs/latex_report/*.toc
+docs/latex_report/*.fls
+docs/latex_report/*.fdb_latexmk
+docs/latex_report/*.synctex.gz

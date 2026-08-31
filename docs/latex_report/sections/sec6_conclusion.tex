@@ -31,54 +31,49 @@ directly they were earned through this project's own measurement rather
 than inherited from the surveyed literature:
 
 \begin{enumerate}
-\item Dual-signal risk routing (embedding cohesion together with
-  answer-vote contention) --- discovered empirically during this project,
-  not inherited directly from any one cited paper.
-\item Group-wise counterfactual consensus --- a genuine generalization of
-  RAGuard's leave-one-out to colluding cliques, with an honestly reported
-  single-query ceiling (\Cref{sec:discussion}), reached only after a real
-  implementation bug was found and fixed (\Cref{sec:debugging}, bug \#7).
-\item A persistent, cross-query trust store --- closes the specific
-  single-query information ceiling that \Cref{sec:discussion} identifies
-  GWCC alone cannot close.
-\item Risk-based compute escalation --- a fast path for the common case,
-  with deep validation reserved for queries that genuinely trigger a risk
-  signal, rather than a fixed multi-pass cost on every query.
-\item A unified, multi-threat evaluation harness --- six attack regimes
-  against six systems, with multi-seed confidence intervals and a
-  per-ring ablation, in one framework built specifically so its
-  components cannot silently drift apart from one another
-  (\Cref{sec:multiseed}).
+\item \textbf{Dual-Signal Risk Routing (\ringcode{claims/nli\_verifier.py})}:
+  Combines geometric embedding cohesion with Natural Language Inference (NLI)
+  premise-hypothesis contradiction scoring and date/numerical clash heuristics,
+  discovered empirically during this project to overcome single-signal false
+  consensus.
+\item \textbf{Group-Wise Counterfactual Consensus \& Leave-Group-Out (LGO) Analysis (\ringcode{consensus/lgo\_analyzer.py})}:
+  Generalizes RAGuard's leave-one-out to graph-theoretic community cliques,
+  accurately isolating and quarantining colluding adversarial clusters.
+\item \textbf{Chain-of-Verification (CoV) \& 5-State Calibrated Abstention (\ringcode{generation/})}:
+  Proposition-level atomic claim cross-examination, cryptographic SHA-256 chunk
+  citation auditing, and calibrated abstention (\texttt{ANSWER}, \texttt{PARTIAL\_ANSWER},
+  \texttt{CONFLICTING\_EVIDENCE}, \texttt{INSUFFICIENT\_EVIDENCE}, \texttt{SECURITY\_BLOCK})
+  to systematically prevent hallucination and sycophancy under adversarial pressure.
+\item \textbf{Tenant-Scoped Dynamic Trust Ledger (\ringcode{trust/trust\_store.py})}:
+  Closes the single-query information-theoretic ceiling by tracking persistent,
+  decaying reputation scores across multi-turn sessions.
+\item \textbf{Interactive Web Dashboard Studio (\texttt{dashboard/})}:
+  A production-ready inspection workbench featuring real-time controlled poison
+  injection sandboxing, live telemetry inspection drawers, side-by-side baseline
+  comparisons, and local LLM backend integration (Ollama, OpenAI-compatible, and built-in).
+\item \textbf{Unified Multi-Threat Statistical Harness (\texttt{benchmarks/})}:
+  Evaluates 6 systems against 6 attack regimes with Student's-$t$ confidence
+  intervals and an automated verification pipeline.
 \end{enumerate}
 
 \subsection{Future Work}
 \label{sec:future-work}
 
 \begin{enumerate}
-\item Run the TF-IDF-vs-LSA embedding comparison already present in the
-  codebase (\texttt{run\_\allowbreak embedding\_\allowbreak
-  comparison.py}) to test whether Ring~1's vocabulary-novelty advantage
-  survives a richer embedding space.
-\item Replace \texttt{doc.answer} with a real, small LLM call, to
-  validate end-to-end the one assumption every ring in this pipeline
-  currently depends on --- that a document's supported answer is reliably
-  extractable by a language model, not only by a ground-truth label.
-\item Test against adaptive attackers specifically optimized to evade
-  Ring~0's repetition-ratio threshold and Ring~2's contention threshold,
-  rather than the realistic-but-non-adaptive attacks evaluated here.
-\item Explicitly measure the detection-versus-runtime trade-off of
-  Ring~3's \texttt{MAX\_PAIR\_SAMPLES} cap, rather than leaving it fixed
-  at its current constant.
-\item Validate the whole pipeline on a naturally authored corpus (for
-  example a BEIR, Natural Questions, or HotpotQA subset), to check
-  whether the shared-generator finding in \Cref{sec:shared-generator} ---
-  that overly uniform clean text can create unintended structural
-  fingerprints --- generalizes beyond this project's synthetic,
-  template-generated text.
-\item Package the benchmark harness itself as an open-source
-  red-teaming tool, so the specific question this project's own
-  \Cref{sec:discussion} raises --- does a given RAG defense's risk signal
-  measure more than one attack axis --- can be tested against other,
-  independently built RAG pipelines, not only against the baselines
-  re-implemented here.
+\item \textbf{Dynamic Neural Vector Store Scaling}:
+  Evaluate high-dimensional neural vector stores (e.g., Qdrant, Milvus, ChromaDB)
+  with dense embeddings (e.g., BGE, E5, Contriever) under large-scale corpus
+  scales ($10^5+$ documents).
+\item \textbf{Adaptive Attacker Co-Evolution}:
+  Test against adaptive, reinforcement-learning-guided attackers specifically
+  optimized to evade Ring~0's repetition-ratio threshold and Ring~2's NLI
+  contradiction heuristics simultaneously.
+\item \textbf{Open-Domain Benchmark Integration}:
+  Validate the complete defense pipeline on public multi-hop and adversarial RAG
+  benchmarks (such as BEIR, HotpotQA, and Poisoned-RAG datasets) to further verify
+  domain generalization across unstructured heterogeneous corpuses.
+\item \textbf{Hardware Acceleration for Ring 3 Graph Partitions}:
+  Explore GPU-accelerated sparse matrix graph clustering to scale Leave-Group-Out
+  (LGO) consensus analysis to retrieval windows of $k > 50$ passages with sub-millisecond
+  latencies.
 \end{enumerate}

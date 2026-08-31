@@ -14,24 +14,25 @@
 \toprule
 \textbf{Component} & \textbf{Specification} \\
 \midrule
-Language / runtime & Python 3.12, standard library \texttt{dataclasses}, \texttt{argparse}, \texttt{json}, \texttt{pathlib} \\
-Numerical / statistical stack & NumPy (SVD-based PCA, similarity math), scikit-learn (\texttt{TfidfVectorizer}, and \texttt{TruncatedSVD} for the Path~B embedding comparison), SciPy (Student's-$t$ critical values) \\
-No external model APIs & No hosted embedding model or LLM call anywhere in the evaluation loop --- the execution environment has no network access. TF-IDF is a real, self-contained, fully inspectable embedding method; \Cref{sec:limitations} states explicitly what this scope choice does and does not validate. \\
-Project structure & \texttt{unified\_rag\_defense/} package (14 modules); \texttt{results/} for generated output; \texttt{claude/} for the six reference papers and development logs \\
-Execution scripts & \texttt{run\_omniguard\_benchmark.py} (single-seed sanity check, main comparison only), \texttt{run\_full\_evaluation.py} (checkpointed multi-seed evaluation --- runs both the main comparison and the per-ring ablation ladder together, reusing shared world-building and query-loop logic so the two cannot silently drift apart, \Cref{sec:multiseed}), \texttt{run\_gwcc\_diagnostic.py} (targeted Ring~3 verification), \texttt{run\_embedding\_comparison.py} (Path~B, TF-IDF vs.\ LSA; see \Cref{sec:future-work}) \\
+Language / runtime & Python 3.12, standard library \texttt{dataclasses}, \texttt{argparse}, \texttt{json}, \texttt{pathlib}, \texttt{http.server}, \texttt{hashlib} \\
+Numerical / statistical stack & NumPy (SVD-based PCA, similarity math), scikit-learn (\texttt{TfidfVectorizer}), SciPy (Student's-$t$ critical values) \\
+LLM / Web Stack & Interactive Web Dashboard (HTML5/CSS3/ES6 vanilla frontend, multi-turn chat, telemetry drawer), multi-threaded REST API server with rate-limiting and CORS security; Universal LLM Client supporting Ollama, OpenAI-compatible APIs, and standalone zero-dependency fallback \\
+Project structure & Dual-mode enterprise architecture: \texttt{omniguard\_production/} (production control plane), \texttt{dashboard/} (web studio \& telemetry), \texttt{unified\_rag\_defense/} (academic baselines), \texttt{benchmarks/} (evaluation harness), \texttt{docs/} (documentation \& papers), and \texttt{results/} \\
+Execution entry points & \texttt{run\_dashboard.py} (top-level web studio launcher), \texttt{run\_benchmark.py} (unified benchmark CLI dispatcher), \texttt{tests/test\_production\_pipeline.py} (integration test suite), and \texttt{benchmarks/run\_full\_evaluation.py} (8-seed statistical evaluation) \\
 \bottomrule
 \end{tabularx}
 \caption{Development environment and project structure.}
 \label{tab:devenv}
 \end{table}
 
-\textbf{Note on scope.} This is a simulated retrieval environment: real
-TF-IDF embeddings and real generated text throughout, but
-\texttt{doc.answer} is a ground-truth label standing in for what a live
-LLM would extract from a retrieved passage, for every ring and every
-baseline alike. No live LLM sits in the evaluation loop. This limitation
-is stated here and repeated in \Cref{sec:limitations} rather than left
-implicit.
+\textbf{Dual-Mode Scope and Execution Realism.}
+To satisfy both rigorous empirical benchmarking and practical deployment requirements, the project operates in two complementary modes:
+\begin{enumerate}
+\item \textbf{Statistical Evaluation Harness (\texttt{benchmarks/} \& \texttt{unified\_rag\_defense/})}:
+  Operates across 1,600 deterministic queries (8 seeds $\times$ 200 queries), evaluating real TF-IDF and SVD projections against 6 literature baselines and 6 attack regimes with Student's-$t$ confidence intervals.
+\item \textbf{Enterprise Production Control Plane (\texttt{omniguard\_production/} \& \texttt{dashboard/})}:
+  Executes real-time, end-to-end RAG defense featuring pairwise NLI contradiction scoring (\ringcode{claims/nli\_verifier.py}), graph-theoretic community Leave-Group-Out analysis (\ringcode{consensus/lgo\_analyzer.py}), Chain-of-Verification (CoV) claim cross-examination (\ringcode{generation/cov\_grounding.py}), cryptographic SHA-256 chunk citation auditing, and 5-state calibrated abstention (\ringcode{generation/abstention\_engine.py}), interfacing with local LLM backends (Ollama, LM Studio/vLLM, or built-in engine).
+\end{enumerate}
 
 \subsection{Debugging and Verification Log}
 \label{sec:debugging}

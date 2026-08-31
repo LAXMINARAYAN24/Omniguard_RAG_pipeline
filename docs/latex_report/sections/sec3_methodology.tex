@@ -32,45 +32,74 @@ the corpus --- before either reaches the retriever. This independence
 matters: a query-only or corpus-only defense is structurally blind to
 whichever half of a compound attack it does not look at, which is
 precisely PIDP's own design. The sanitized query and the DRS-verified
-document pool then meet at a shared TF-IDF retrieval index, which also
+document pool then meet at a shared retrieval index, which also
 applies the current Dynamic Trust Store weighting. Ring~2 evaluates the
 resulting top-$k$ window and decides, per query, whether the fast path (a
-single weighted-majority vote) is sufficient or whether the query must be
-escalated to Ring~3's more expensive Group-Wise Counterfactual Consensus.
-Whichever path answers the query, the Dynamic Trust Store is updated
-afterward, so a document that behaved suspiciously in one query enters
-the next query already down-weighted.
+single weighted-majority vote or direct generation) is sufficient or
+whether the query must be escalated to Ring~3's more expensive
+Group-Wise Counterfactual Consensus and Leave-Group-Out community
+partitioning. Whichever path answers the query, the Dynamic Trust Store
+is updated afterward, so a document that behaved suspiciously in one query
+enters the next query already down-weighted.
 
-Module-to-ring mapping, for reference throughout the rest of this
-section:
+To support both rigorous empirical benchmarking and live deployment
+inspection, the implementation is organized into a clean dual-mode
+architecture:
+
+\begin{enumerate}
+\item \textbf{Enterprise Production Control Plane (\texttt{omniguard\_production/})}:
+  A modular, real-time RAG defense pipeline featuring Natural Language
+  Inference (NLI) contradiction scoring, graph-theoretic Leave-Group-Out
+  community analysis, Chain-of-Verification (CoV) claim-level cross-examination,
+  cryptographic chunk citation auditing, and a calibrated 5-state abstention
+  engine.
+\item \textbf{Interactive Web Dashboard Studio (\texttt{dashboard/})}:
+  A modern, multi-turn web interface with real-time controlled poison injection
+  sandboxing, live telemetry inspection drawers, side-by-side baseline
+  comparisons, and local LLM backend integration (Ollama, OpenAI-compatible,
+  and standalone built-in).
+\item \textbf{Statistical Evaluation Harness (\texttt{unified\_rag\_defense/} \& \texttt{benchmarks/})}:
+  Re-implementations of five literature baselines and a multi-seed,
+  1,600-query evaluation pipeline reporting Student's-$t$ confidence
+  intervals.
+\end{enumerate}
+
+Module-to-ring mapping across the codebase:
 
 \begin{itemize}
-\item \ringcode{query\_guard.py} --- Ring 0: query-path suffix guard
-\item \ringcode{drs\_filter.py} --- Ring 1: spectral ingestion guard (fit/calibration-split PCA)
-\item \ringcode{risk\_router.py} --- Ring 2: risk-aware router (cohesion + answer contention)
-\item \ringcode{gwcc\_consensus.py} --- Ring 3: Group-Wise Counterfactual Consensus
-\item \ringcode{omniguard\_pipeline.py} --- end-to-end orchestration and the Dynamic Trust Store
-\item \ringcode{attack\_simulator.py} --- the six attack regimes evaluated in \Cref{sec:results}
-\item \ringcode{baselines.py} --- the five reference-implementation baselines compared against
-\item \ringcode{bench\_common.py, stats\_utils.py, ablations.py} --- shared evaluation plumbing, described in \Cref{sec:eval-methodology}
+\item \ringcode{gateway/query\_guard.py} \& \ringcode{query\_guard.py} --- Ring 0: query-path suffix and prompt injection guard
+\item \ringcode{embeddings/drs\_engine.py} \& \ringcode{drs\_filter.py} --- Ring 1: spectral ingestion guard (fit/calibration-split PCA)
+\item \ringcode{claims/nli\_verifier.py} \& \ringcode{risk\_router.py} --- Ring 2: semantic NLI contention scoring and risk-aware router
+\item \ringcode{consensus/lgo\_analyzer.py} \& \ringcode{gwcc\_consensus.py} --- Ring 3: graph-theoretic Group-Wise Counterfactual Consensus (LGO)
+\item \ringcode{generation/cov\_grounding.py} \& \ringcode{abstention\_engine.py} --- Chain-of-Verification grounding, citation hashing, and 5-state calibrated abstention
+\item \ringcode{trust/trust\_store.py} \& \ringcode{provenance.py} --- tenant-scoped Dynamic Trust Ledger and cryptographic document metadata
+\item \ringcode{dashboard/dashboard\_server.py} \& \ringcode{llm\_client.py} --- secure REST API server, telemetry extraction, and LLM connector
+\item \ringcode{benchmarks/} \& \ringcode{baselines.py} --- multi-seed statistical benchmarks and baseline reference models
 \end{itemize}
 
 \subsection{Algorithms, Techniques, and Defense Mechanisms}
 
-\subsubsection{Ring 0 --- Query-Path Guard (\ringcode{query\_guard.py})}
+\subsubsection{Ring 0 --- Query-Path Guard and Injection Gateway (\ringcode{query\_guard.py})}
 
 Ring~0 screens the incoming query text itself, before it is embedded, for
-the token-repetition signature of a PIDP-style adversarial suffix. It
-computes a repetition ratio over any candidate suffix --- the fraction of
-tokens in that suffix that repeat a token already seen earlier in the
-same span --- and strips the suffix if that ratio meets or exceeds a
-threshold of 0.5 (i.e.\ at least half the suffix's tokens are repeats).
-This threshold is a fixed, measured constant (\texttt{REPETITION\_THRESHOLD}
-in \ringcode{query\_guard.py}) rather than a value tuned against attack
-outcomes: keyword-stuffed injection suffixes are repetitive by
-construction, since their entire purpose is to force specific tokens to
-dominate the query's embedding, while genuine question text is not. Only
-the sanitized query is passed forward to embedding and retrieval.
+both the token-repetition signature of a PIDP-style adversarial suffix
+and direct prompt-injection / instruction-override patterns.
+
+\begin{enumerate}
+\item \textbf{Token Repetition Screening}: It computes a repetition ratio
+  over candidate suffixes --- the fraction of tokens that repeat a token
+  already seen earlier in the same span --- and strips the suffix if that
+  ratio meets or exceeds a threshold of 0.5 (i.e.\ at least half the
+  suffix's tokens are repeats). Keyword-stuffed injection suffixes are
+  repetitive by construction, since their purpose is to force specific
+  tokens to dominate the query's embedding vector.
+\item \textbf{Direct Prompt Injection Screening}: In the production control
+  plane, Ring~0 also scans for prompt override signatures (e.g.,
+  \texttt{"ignore all previous instructions"}, \texttt{"system credentials"},
+  or delimiter evasion patterns). When a direct prompt injection is
+  detected, the query is immediately intercepted, bypassing retrieval
+  entirely and returning a \texttt{SECURITY\_BLOCK} abstention state.
+\end{enumerate}
 
 \subsubsection{Ring 1 --- Spectral Ingestion Guard: DRS (\ringcode{drs\_filter.py})}
 
@@ -102,13 +131,13 @@ Targets: documents whose vocabulary or statistics fall outside the clean
 distribution --- standard poisoning, the corpus half of PIDP, and plain
 (non-camouflaged) collusion, all of which carry a genuine lexical tell.
 
-\subsubsection{Ring 2 --- Risk-Aware Router (\ringcode{risk\_router.py})}
+\subsubsection{Ring 2 --- Risk-Aware Router \& Semantic NLI Contention (\ringcode{risk\_router.py})}
 \label{sec:ring2}
 
-Ring~2 computes two independent, unsupervised signals on the top-$k$
-retrieved documents and escalates to Ring~3 if either fires --- an OR
-gate, not a weighted blend, so that a strong signal on either axis alone
-is sufficient.
+Ring~2 evaluates the retrieved top-$k$ documents and determines whether
+the query can follow a fast execution path or must be escalated to Ring~3's
+deep consensus verification. It combines two independent, unsupervised
+signals:
 
 \begin{description}[leftmargin=0pt,style=nextline,font=\bfseries\color{navy}]
 \item[Signal A --- Embedding cohesion.] Mean pairwise cosine similarity
@@ -117,80 +146,94 @@ is sufficient.
   lowers this value. Threshold \texttt{RISK\_THRESHOLD = 0.55}, calibrated
   from measured clean-only top-5 retrievals, which were never observed
   below approximately 0.58 cohesion.
-\item[Signal B --- Answer contention.] The weighted vote-mass fraction
-  among the top-$k$ that disagrees with the plurality answer, using the
-  same similarity$\times$trust weighting the final vote itself uses ---
-  not a privileged ground-truth signal, but the identical proxy
-  \texttt{weighted\_majority} already relies on for every system in this
-  evaluation. Measured directly: clean-only top-5 retrievals show exactly
-  0.0 contention, always, across every seed tested ($n{=}200$/seed),
-  because every genuine document belonging to one topic asserts that
-  topic's one real answer. Threshold \texttt{CONTENTION\_THRESHOLD = 0.15}
-  --- chosen with headroom above that measured 0.0 clean-query floor,
-  since even the smallest observed nonzero contention already indicates
-  the retrieved set is not unanimous.
+\item[Signal B --- Semantic NLI Contention and Answer Contention.] In the
+  evaluation benchmark, Signal B measures the weighted vote-mass fraction
+  among top-$k$ that disagrees with the plurality answer. In the production
+  control plane (\ringcode{claims/nli\_verifier.py}), Signal B computes
+  pairwise Natural Language Inference (NLI) contradiction intensity across
+  retrieved passage propositions, enhanced with date/numerical clash
+  heuristics to detect conflicting factual assertions (e.g., conflicting
+  launch dates or budgetary figures).
 \end{description}
 
-Signal B exists specifically because Signal A cannot see a particular
-class of attack: a document engineered to be geometrically
-indistinguishable from genuine content (\Cref{sec:literature}'s
-SilentRetrieval-style camouflage) will not depress cohesion, by
-construction. Measured directly in this project (\Cref{sec:discussion}):
-mean top-5 cohesion under a fully camouflaged stealth-collusion attack is
-0.70, statistically indistinguishable from the 0.70 measured on entirely
-clean queries. Ring~2's second, independent signal is what actually
-detects this class of attack --- not a refinement of the first signal,
-but a genuinely different axis of measurement.
+The router outputs one of three operational states:
+\begin{itemize}
+\item \texttt{SAFE\_PASS}: High cohesion and zero contradiction; processed
+  directly with single-pass generation.
+\item \texttt{TARGETED\_CONSENSUS}: Low cohesion or moderate contradiction
+  (\texttt{CONTENTION\_THRESHOLD = 0.15}); escalated to Ring~3 for
+  graph-theoretic consensus partitioning.
+\item \texttt{QUARANTINE\_BLOCK}: Critical contradiction intensity or high
+  concentration of low-trust provenance sources; triggers immediate
+  quarantine.
+\end{itemize}
 
-\subsubsection{Ring 3 --- Group-Wise Counterfactual Consensus / GWCC (\ringcode{gwcc\_consensus.py})}
+\subsubsection{Ring 3 --- Graph-Theoretic GWCC and Leave-Group-Out Analysis (\ringcode{gwcc\_consensus.py})}
 \label{sec:ring3}
 
-Ring~3 generalizes RAGuard/ZKIP's own single-document leave-one-out logic
---- ``does removing this document change the answer? If so, distrust it
-and recompute'' --- to colluding pairs, without treating the
-generalization as a simple vote across counterfactual subsets (a version
-of this ring that did exactly that turned out to be a genuine, measured
-no-op; see \Cref{sec:debugging}, bug \#7).
+Ring~3 addresses RAGuard/ZKIP's single-document leave-one-out blind spot
+by generalizing counterfactual verification to colluding cliques via
+Leave-Group-Out (LGO) graph community analysis:
 
 \begin{enumerate}
-\item \textbf{Singleton pass}, identical to RAGuard/ZKIP: for each
-  retrieved document, remove it alone and recompute the vote. If the
-  answer changes, that document is implicated.
-\item \textbf{Pair pass}, restricted to genuine self-corroborating
-  cliques: for each candidate pair of documents, both must (a) share the
-  same answer as each other, (b) hold that answer as a self-contained
-  clique with no other retrieved document corroborating it, and (c)
-  currently be part of the winning answer. Only a pair meeting all three
-  conditions is tested by removing both together; if the answer changes,
-  both are implicated.
-\item \textbf{Final answer}: a plain weighted-majority vote over the
-  retrieved set with every implicated document excluded.
+\item \textbf{Pairwise Agreement Graph}: Constructs an undirected graph
+  where nodes represent retrieved passages and edge weights reflect pairwise
+  semantic entailment (absence of contradiction).
+\item \textbf{Community Clustering}: Partitions the retrieved set into
+  coherent clusters (e.g., legitimate consensus vs.\ adversarial colluding
+  cliques).
+\item \textbf{Leave-Group-Out (LGO) Analysis}: Evaluates each community by
+  temporarily removing the entire group and recalculating cross-cluster
+  support. If removing a minority clique stabilizes the factual consensus
+  and eliminates contradiction spikes, that entire clique is quarantined.
+\item \textbf{Singleton Fallback}: For unclustered documents, individual
+  leave-one-out counterfactual testing is applied.
 \end{enumerate}
 
-The clique restriction in step 2 is not a minor refinement --- an
-earlier, looser version that implicated any pair whose joint removal
-changed the vote was built, tested, and rejected, because it excluded
-correct-but-numerically-scarce evidence just as often as it excluded
-genuine poison pairs, and measurably \emph{raised} attack success rather
-than lowering it. Coverage of the pair pass is bounded and probabilistic
-(\texttt{MAX\_PAIR\_SAMPLES} limits how many candidate pairs are checked
-per query, for tractability), which is stated here as an explicit, honest
-limitation rather than a claim of exhaustive $k'{=}2$ detection.
+\subsubsection{Chain-of-Verification (CoV) \& 5-State Calibrated Abstention}
+\label{sec:cov-abstention}
 
-\subsubsection{Dynamic Trust Store (\ringcode{omniguard\_pipeline.py})}
+To eliminate hallucinations and prevent model sycophancy when facing
+conflicting retrieval evidence, the production pipeline implements
+Chain-of-Verification (CoV) grounding (\ringcode{generation/cov\_grounding.py})
+coupled with a 5-state calibrated abstention engine
+(\ringcode{generation/abstention\_engine.py}):
+
+\begin{itemize}
+\item \textbf{Proposition Breakdown}: Generates individual factual
+  propositions from the candidate answer and formulates atomic verification
+  questions.
+\item \textbf{Cross-Examination}: Answers verification questions strictly
+  using isolated, verified document partitions, flagging any proposition
+  lacking evidential support.
+\item \textbf{Cryptographic Citation Auditing}: Inserts verifiable inline
+  citations mapping each claim to its exact document, chunk index, and
+  SHA-256 content hash (\texttt{[Doc: <title> | Chunk: <idx> | Hash: <hash>]}).
+\item \textbf{5-State Calibrated Abstention}:
+  \begin{enumerate}
+  \item \texttt{ANSWER}: High confidence, unanimous evidential support.
+  \item \texttt{PARTIAL\_ANSWER}: Primary claim verified; unsupported sub-claims
+    explicitly omitted with disclaimers.
+  \item \texttt{CONFLICTING\_EVIDENCE}: Irreconcilable contradiction detected
+    across retrieved sources; model abstains and summarizes the conflicting
+    claims.
+  \item \texttt{INSUFFICIENT\_EVIDENCE}: Retrieved documents do not contain
+    sufficient information to answer; model abstains without fabricating.
+  \item \texttt{SECURITY\_BLOCK}: Malicious prompt injection or critical policy
+    violation detected; query execution terminated.
+  \end{enumerate}
+\end{itemize}
+
+\subsubsection{Tenant-Scoped Dynamic Trust Store (\ringcode{trust\_store.py})}
 \label{sec:trust-store}
 
-Persistent, per-document trust scores that carry across queries within a
-session, decaying when Ring~3 implicates a document and growing when a
-document repeatedly corroborates the winning answer. Trust score enters
-the retrieval weighting as a multiplicative factor on cosine similarity,
-so a document that behaved suspiciously in an earlier query is already
-down-weighted the next time it competes for a retrieval slot --- a
-capability that is, by construction, unavailable to any ring that
-evaluates one query in isolation. \Cref{sec:results}'s headline results
-make this ring's contribution explicit rather than folding it silently
-into the rest of the pipeline (\Cref{sec:ablation-results},
-\Cref{sec:discussion}).
+Persistent, per-domain and per-document trust scores that carry across
+queries within a tenant session. Trust scores decay exponentially when
+Ring~3 quarantines a document or Ring~0 detects an injection from a publisher,
+and grow incrementally when a document repeatedly corroborates clean,
+verified answers. Trust enters retrieval weighting as a multiplicative factor
+on embedding similarity, ensuring that colluding sources that attempt repeated
+injection are systematically suppressed over the lifetime of a session.
 
 \subsubsection{Attack Simulator (\ringcode{attack\_simulator.py})}
 \label{sec:attack-simulator}
