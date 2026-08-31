@@ -4,74 +4,28 @@ under a genuinely different embedding geometry, not just TF-IDF?
 
 WHAT "REAL EMBEDDINGS" MEANS HERE, AND WHY: this environment has no network
 access, so a pretrained neural embedding model (sentence-transformers, an
-API-based embedding service, etc.) is not installable -- confirmed directly
-(pip install fails with "no matching distribution," not a slow timeout).
-The honest options with what's actually available locally (sklearn, numpy;
-no gensim, no pretrained word vectors on disk) are (a) LSA/TruncatedSVD on
-top of the existing TF-IDF matrix, or (b) a from-scratch embedding trained
-on this project's own ~300-sentence templated corpus. (b) was rejected: a
-model trained on a corpus this small and this templated would just
-memorize the templates, which doesn't test what this comparison is
-actually for (whether the defense generalizes to a different semantic
-geometry, not whether it works on a geometry custom-fit to this exact
-data). So this compares TF-IDF against LSA specifically -- a REAL, DENSE,
-LOWER-DIMENSIONAL representation (verified: TF-IDF is ~92.5% sparse on
-this corpus; LSA at 100 components is 0% sparse, i.e. every dimension is
-populated for every document), fit on the SAME text via TruncatedSVD, so
-the comparison isolates the effect of dense-vs-sparse/dimensionality
-specifically rather than also changing tokenization. This is a real,
-substantive test of geometry-dependence -- it is NOT the same claim as
-"validated against a pretrained neural embedding model," and this script
-does not claim otherwise anywhere in its output.
-
-THRESHOLD RECALIBRATION -- MEASURED, NOT ASSUMED: three of the codebase's
-numeric thresholds are explicitly justified (in their own source comments)
-by measurements taken against this corpus's TF-IDF similarity statistics:
-risk_router.RISK_THRESHOLD (cohesion floor), and drs_filter's
-LOW_VARIANCE_FRACTION/FILTER_PERCENTILE (indirectly, via the PCA
-subspace). Before assuming those numbers need recalibrating for LSA, this
-script's `measure_clean_statistics()` takes the SAME measurements
-risk_router.py's own comments describe, but in LSA space, and prints both
-side by side. Measured result (seed=7, docs_per_topic=30, n=200): LSA's
-clean-only cohesion floor is ~0.582, TF-IDF's is ~0.588 -- both comfortably
-above the existing RISK_THRESHOLD=0.55, and answer_contention is exactly
-0.0 in both spaces for a reason that doesn't depend on embedding geometry
-at all (every genuine document in a topic agrees on that topic's real
-answer). So: the existing thresholds are NOT recalibrated by default here,
-because direct measurement shows they don't need to be on this corpus --
-recalibration was the planned first move, not skipped by default, but
-measurement came first and found no gap to close. Pass
---recalibrate-risk-threshold to override RISK_THRESHOLD with a value
-computed from THIS run's own measured LSA cohesion floor (see
---help), for anyone who wants the counterfactual anyway.
-
-DRS's own threshold does NOT need a separate override flag: DRSFilter
-already recalibrates itself against whatever reference_docs it's given
-(that's what DRSFilter.__init__'s calibration split IS) -- so it
-automatically produces an LSA-appropriate threshold from LSA reference
-embeddings with no code change, and this script's holdout-FPR measurement
-is what checks whether that self-recalibration actually worked (rather
-than assuming it did).
-
-WHAT THIS SCRIPT DOES NOT DO: it does not re-run Path A's full 8-seed,
-multi-hour evaluation a second time for LSA by default (that's available
-via --seeds, but defaults to a smaller comparison run) -- and it writes to
-results/path_b_*, never touching results/path_a_*, so Path A's already-
-verified deliverable is never at risk of being overwritten or corrupted by
-running this script.
+API-based embedding service, etc.) is not installable. This script compares
+TF-IDF (sparse representation) against LSA/TruncatedSVD (dense, 100 components,
+fit on the same TF-IDF matrix).
 
 Usage:
-    python run_embedding_comparison.py                    # default: 3 seeds x 200 queries, both spaces
-    python run_embedding_comparison.py --seeds 7 11 23 41 59 79 97 113  # full Path-A-parity run
-    python run_embedding_comparison.py --recalibrate-risk-threshold
+    python benchmarks/run_embedding_comparison.py                    # default: 3 seeds x 200 queries, both spaces
+    python benchmarks/run_embedding_comparison.py --seeds 7 11 23 41 59 79 97 113  # full Path-A-parity run
+    python benchmarks/run_embedding_comparison.py --recalibrate-risk-threshold
 """
 from __future__ import annotations
 import argparse
 import json
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
+
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from unified_rag_defense.bench_common import (
     build_world, run_system, measure_holdout_fpr, fresh_docs, REGIMES,
@@ -81,7 +35,7 @@ from unified_rag_defense.stats_utils import summarize, Stat
 from unified_rag_defense.query_guard import screen_query, effective_embedding
 from unified_rag_defense.retrieval import top_k
 from unified_rag_defense.risk_router import cohesion, answer_contention, RISK_THRESHOLD, CONTENTION_THRESHOLD
-from run_full_evaluation import MAIN_SYSTEMS, METRICS, dispatch_main, tally_to_metrics, aggregate, _row
+from benchmarks.run_full_evaluation import MAIN_SYSTEMS, METRICS, dispatch_main, tally_to_metrics, aggregate, _row
 
 DEFAULT_SEEDS = [7, 11, 23]
 DEFAULT_N_QUERIES = 200
@@ -171,8 +125,7 @@ def write_markdown_report(path: Path, seeds, n_queries, docs_per_topic,
     lines.append(f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}. "
                  f"Compares TF-IDF (sparse, the representation Path A's results are built on) "
                  f"against LSA/TruncatedSVD (dense, {results_by_space['lsa']['dim']} components, fit on the "
-                 f"same TF-IDF matrix — see this script's module docstring for why LSA specifically, "
-                 f"and not a pretrained neural embedding). Mean ± 95% CI (Student's-t) across "
+                 f"same TF-IDF matrix). Mean ± 95% CI (Student's-t) across "
                  f"{len(seeds)} seed(s): {seeds}, {n_queries} queries/seed, docs_per_topic={docs_per_topic}.")
     lines.append("")
     lines.append("## 1. Does the existing calibration hold in LSA space? (measured, not assumed)")
@@ -225,10 +178,7 @@ def main():
     ap.add_argument("--docs-per-topic", type=int, default=30)
     ap.add_argument("--recalibrate-risk-threshold", action="store_true",
                      help="Override RISK_THRESHOLD with a value derived from this run's own measured "
-                          "LSA cohesion floor, instead of the existing TF-IDF-measured constant. Off by "
-                          "default because direct measurement (see module docstring) shows the existing "
-                          "value already holds in LSA space on this corpus -- this flag exists for anyone "
-                          "who wants the counterfactual anyway, and prints what changed if used.")
+                          "LSA cohesion floor, instead of the existing TF-IDF-measured constant.")
     args = ap.parse_args()
 
     if args.recalibrate_risk_threshold:
@@ -236,14 +186,14 @@ def main():
         from unified_rag_defense.bench_common import build_world as _bw
         probe_world, _, _ = _bw(seed=args.seeds[0], docs_per_topic=args.docs_per_topic, embedding_space="lsa")
         probe_stats = measure_clean_statistics(probe_world, n_queries=args.n_queries, seed=args.seeds[0])
-        new_threshold = round(probe_stats["cohesion_min"] - 0.01, 3)  # small safety margin below the measured floor
+        new_threshold = round(probe_stats["cohesion_min"] - 0.01, 3)
         print(f"--recalibrate-risk-threshold: overriding RISK_THRESHOLD {rr.RISK_THRESHOLD} -> {new_threshold} "
               f"(measured LSA clean cohesion floor {probe_stats['cohesion_min']:.3f} minus a 0.01 margin)")
         rr.RISK_THRESHOLD = new_threshold
         import unified_rag_defense.ablations as abl
         abl.RISK_THRESHOLD = new_threshold
 
-    results_dir = Path(__file__).parent / "results"
+    results_dir = REPO_ROOT / "results"
     results_dir.mkdir(exist_ok=True)
 
     results_by_space, agg_main_by_space, agg_abl_by_space = {}, {}, {}
@@ -260,7 +210,6 @@ def main():
         agg_main_by_space[space] = aggregate(result["main_raw"])
         agg_abl_by_space[space] = aggregate(result["ablation_raw"])
         holdout_stat_by_space[space] = str(summarize(result["holdout_fpr_per_seed"]))
-        # average the per-seed clean-stat dicts
         keys = result["clean_stats_per_seed"][0].keys()
         clean_stat_by_space[space] = {
             k: sum(d[k] for d in result["clean_stats_per_seed"]) / len(result["clean_stats_per_seed"])

@@ -49,8 +49,8 @@ perfect k'=2 detection.
 from __future__ import annotations
 import itertools
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional, Set
 from .corpus import Document
 
 MAX_PAIR_SAMPLES = 6
@@ -70,6 +70,10 @@ class GWCCResult:
     answer: Optional[str]
     calls: int
     flagged_subset: bool  # True iff any document was excluded
+    implicated_indices: Set[int] = field(default_factory=set)
+    implicated_doc_ids: Set[str] = field(default_factory=set)
+    loo_implicated_ids: List[str] = field(default_factory=list)
+    pair_implicated_ids: List[str] = field(default_factory=list)
 
 
 def gwcc_consensus(entries: List[Tuple[Document, float]], rng) -> GWCCResult:
@@ -80,6 +84,8 @@ def gwcc_consensus(entries: List[Tuple[Document, float]], rng) -> GWCCResult:
     calls += 1
 
     implicated: set = set()
+    loo_implicated: set = set()
+    pair_implicated: set = set()
 
     # Pass 1: singleton leave-one-out (RAGuard/ZKIP's own mechanism)
     for i in range(k):
@@ -88,6 +94,7 @@ def gwcc_consensus(entries: List[Tuple[Document, float]], rng) -> GWCCResult:
         calls += 1
         if a != full_answer:
             implicated.add(i)
+            loo_implicated.add(i)
 
     # Pass 2: pairwise leave-group-out, restricted to genuine self-corroborating
     # cliques (see module docstring for why "any flip-inducing pair" over-triggers).
@@ -114,7 +121,20 @@ def gwcc_consensus(entries: List[Tuple[Document, float]], rng) -> GWCCResult:
         if a != full_answer:
             implicated.add(i)
             implicated.add(j)
+            pair_implicated.add(i)
+            pair_implicated.add(j)
 
     cleaned = [e for idx, e in enumerate(entries) if idx not in implicated]
     final = weighted_majority(cleaned) if cleaned else full_answer
-    return GWCCResult(answer=final, calls=calls, flagged_subset=bool(implicated))
+    implicated_doc_ids = {entries[idx][0].doc_id for idx in implicated}
+    loo_ids = [entries[idx][0].doc_id for idx in sorted(loo_implicated)]
+    pair_ids = [entries[idx][0].doc_id for idx in sorted(pair_implicated)]
+    return GWCCResult(
+        answer=final,
+        calls=calls,
+        flagged_subset=bool(implicated),
+        implicated_indices=implicated,
+        implicated_doc_ids=implicated_doc_ids,
+        loo_implicated_ids=loo_ids,
+        pair_implicated_ids=pair_ids
+    )

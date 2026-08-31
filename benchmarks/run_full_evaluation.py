@@ -1,53 +1,32 @@
 """
-run_full_evaluation.py — Path A: the full, defensible evaluation.
+run_full_evaluation.py — Comprehensive Multi-Seed Statistical Evaluation Suite.
 
 Runs BOTH the 6-system comparison and the 4-step per-ring ablation ladder,
 across multiple independent seeds (each seed = an independently generated
-corpus, query set, DRS calibration split, and set of attacks -- not just a
-different random shuffle of the same fixed data), and reports mean +/- 95%
-confidence interval across seeds for every metric, plus real wall-clock
-latency alongside call-counts. Writes a results/ folder with the raw
-per-seed numbers and a ready-to-paste markdown report.
-
-WHY MULTIPLE SEEDS: a single run (docs_per_topic=30, seed=7, n=200) is what
-run_omniguard_benchmark.py already reports, and walkthrough.md documents a
-3-seed stability spot-check (7, 11, 23) for OmniGuard-RAG's stealth-collusion
-ASR specifically. This script generalizes that properly: every system (not
-just OmniGuard-RAG) and every metric (not just stealth-collusion ASR) gets
-the same multi-seed treatment, and a real confidence interval (Student's-t,
-not just "here are 3 numbers, they look similar") is reported, not asserted.
-
-WHY A SEPARATE LATENCY TABLE: avg_calls counts how many LLM-equivalent
-calls a system makes, on the theory that in a deployed system, real LLM
-calls dominate cost. That's a reasonable model of PRODUCTION cost, but it
-silently assumes every "call" costs about the same, which is not measured
-here, only assumed. This benchmark has no real LLM in the loop (see
-baselines.py's RAGuard/ZKIP docstring) -- there's nothing to time that
-would represent production LLM latency. What CAN be measured honestly is
-each defense's own orchestration cost: how expensive its own logic is,
-independent of whatever LLM calls it wraps. That turns out to matter: see
-the printed compute-cost table below -- TriShield's fixed "3 calls" is
-measurably the most expensive system in this benchmark by wall-clock time
-(its Ring 1 does per-document string-pattern matching across the whole
-retrieved pool), while RAGuard's "6 calls" are the cheapest (six reruns of
-a k=5 numeric vote). A reader relying on avg_calls alone would rank these
-two systems backwards on compute cost. Report both; neither number alone
-tells the full story, and neither should be read as production LLM latency.
+corpus, query set, DRS calibration split, and set of attacks), and reports
+mean +/- 95% confidence interval across seeds for every metric, plus real
+wall-clock latency alongside call-counts.
 
 Usage:
-    python run_full_evaluation.py                       # 8 seeds x 200 queries (~6-7 min)
-    python run_full_evaluation.py --quick                # 3 seeds x 60 queries, fast iteration
-    python run_full_evaluation.py --seeds 7 11 23 42     # custom seed list
-    python run_full_evaluation.py --n-queries 100
+    python benchmarks/run_full_evaluation.py                       # 8 seeds x 200 queries
+    python benchmarks/run_full_evaluation.py --quick                # 3 seeds x 60 queries, fast iteration
+    python benchmarks/run_full_evaluation.py --seeds 7 11 23 42     # custom seed list
+    python benchmarks/run_full_evaluation.py --n-queries 100
 """
 from __future__ import annotations
 import argparse
 import json
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
+
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from unified_rag_defense.bench_common import build_world, run_system, measure_holdout_fpr
 from unified_rag_defense import baselines
@@ -60,7 +39,7 @@ MAIN_SYSTEMS = [
     "RAGuard / ZKIP (2026)", "TriShield (2026)", "OmniGuard-RAG (Ours)",
 ]
 
-DEFAULT_SEEDS = [7, 11, 23, 41, 59, 79, 97, 113]  # 7/11/23 continue the original 3-seed spot-check
+DEFAULT_SEEDS = [7, 11, 23, 41, 59, 79, 97, 113]
 QUICK_SEEDS = [7, 11, 23]
 
 METRICS = ["accuracy", "overall_asr", "pidp_asr", "collusion_asr",
@@ -124,11 +103,6 @@ def run_all_seeds(seeds: List[int], n_queries: int, docs_per_topic: int) -> dict
 
 
 def load_checkpoint(results_dir: Path, n_queries: int, docs_per_topic: int):
-    """Loads a previous (possibly partial) run's raw per-seed results, IF its
-    n_queries/docs_per_topic match what's being requested now (mixing runs
-    at different settings into one set of confidence intervals would be
-    invalid, so a mismatch starts fresh rather than silently merging
-    incompatible data)."""
     p = results_dir / "path_a_raw_results.json"
     if not p.exists():
         return None
@@ -145,10 +119,6 @@ def aggregate(raw: Dict[str, Dict[str, List[float]]]) -> Dict[str, Dict[str, Sta
     return {name: {metric: summarize(values) for metric, values in per_metric.items()}
             for name, per_metric in raw.items()}
 
-
-# --------------------------------------------------------------------------
-# Reporting
-# --------------------------------------------------------------------------
 
 def _row(name: str, s: Dict[str, Stat]) -> str:
     return (f"{name:<24}| {str(s['accuracy']):>10} | {str(s['overall_asr']):>12} | "
@@ -257,16 +227,9 @@ def main():
 
     seeds_requested = args.seeds or (QUICK_SEEDS if args.quick else DEFAULT_SEEDS)
     n_queries = args.n_queries or (60 if args.quick else 200)
-    results_dir = Path(__file__).parent / "results"
+    results_dir = REPO_ROOT / "results"
     results_dir.mkdir(exist_ok=True)
 
-    # Resumable: a single evaluation call can exceed available wall-clock
-    # budget for many seeds, so this checkpoints per seed. Re-running with
-    # (possibly different) --seeds at the SAME --n-queries/--docs-per-topic
-    # loads whatever seeds were already computed, runs only the NEW ones in
-    # this call, and always reports/writes the FULL accumulated set -- so
-    # "run seeds 7 11, then later run 23 41" and "run 7 11 23 41 in one call"
-    # produce the identical final report.
     checkpoint = load_checkpoint(results_dir, n_queries, args.docs_per_topic)
     if checkpoint is not None:
         already_done = list(checkpoint["seeds"])
@@ -274,23 +237,6 @@ def main():
         raw_main = {name: defaultdict(list, checkpoint["main_raw"].get(name, {})) for name in MAIN_SYSTEMS}
         raw_ablation = {name: defaultdict(list, checkpoint["ablation_raw"].get(name, {})) for name in ABLATION_VARIANTS}
         holdout_fprs = list(checkpoint["holdout_fpr_per_seed"])
-        # BUGFIX (found during Path A's own 8-seed run): this used to be
-        # `seeds = already_done + new_seeds`, which pre-populated `seeds`
-        # with every new seed BEFORE the run loop below also does
-        # `seeds.append(seed)` for each one as it's processed -- duplicating
-        # every newly-run seed in both the JSON checkpoint's "seeds" list
-        # and the printed seed list (e.g. resuming with seeds [41, 59]
-        # after [7, 11, 23] was already done produced
-        # seeds=[7, 11, 23, 41, 59, 41, 59]). The per-seed VALUE lists
-        # (main_raw/ablation_raw/holdout_fpr_per_seed, and therefore every
-        # mean/CI in the report) were NOT affected, since those are only
-        # ever appended once per seed inside the loop -- but the seeds
-        # list itself was wrong, which matters because it's what a reader
-        # checks to know which seeds actually back a given report. Fix:
-        # `seeds` starts as exactly `already_done` here (mirroring the
-        # no-checkpoint branch below, where it starts at []) and grows
-        # ONLY via the loop's own seeds.append(seed) -- one append per
-        # seed, run once.
         seeds = list(already_done)
         if already_done:
             print(f"Resuming: {len(already_done)} seed(s) already computed at n_queries={n_queries}, "
@@ -322,9 +268,6 @@ def main():
             seeds.append(seed)
             print(f"  seed {seed} ({si + 1}/{len(new_seeds)} new) done in {time.perf_counter() - t0:.1f}s", flush=True)
 
-            # Checkpoint after EVERY seed, not just at the end -- so a run that
-            # gets cut off partway through still leaves a valid, resumable
-            # result at whatever seed count it reached.
             raw_out = {
                 "seeds": seeds, "n_queries": n_queries, "docs_per_topic": args.docs_per_topic,
                 "generated_utc": datetime.now(timezone.utc).isoformat(),
@@ -354,11 +297,6 @@ def main():
                            holdout_stat, agg_main, agg_abl)
     print(f"\nWrote {results_dir / 'path_a_raw_results.json'}")
     print(f"Wrote {results_dir / 'path_a_report.md'}")
-    if set(seeds) < set(DEFAULT_SEEDS):
-        remaining = [s for s in DEFAULT_SEEDS if s not in seeds]
-        print(f"\n{len(remaining)} of the default {len(DEFAULT_SEEDS)} seeds not yet run: {remaining}")
-        print(f"Re-run with --seeds {' '.join(str(s) for s in remaining)} to add them "
-              f"(or just re-run the default command again in batches).")
 
 
 if __name__ == "__main__":

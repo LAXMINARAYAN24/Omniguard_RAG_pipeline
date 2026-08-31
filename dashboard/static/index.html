@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniGuard-RAG Studio — Interactive Defense & Local LLM Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body data-theme="dark">
+  <div class="app-layout">
+    <!-- Left Navigation & Topic Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">🛡️</div>
+          <div class="brand-text">
+            <h2>OmniGuard RAG</h2>
+            <span class="badge badge-accent">Interactive Studio</span>
+          </div>
+        </div>
+        <button class="icon-btn" id="newChatBtn" title="Start New Chat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+      </div>
+
+      <!-- Live Status Widget -->
+      <div class="sidebar-section status-card">
+        <div class="status-header">
+          <span class="status-indicator online" id="serverIndicator"></span>
+          <span class="status-title">System Health</span>
+        </div>
+        <div class="status-details">
+          <div class="status-item">
+            <span>LLM Backend:</span>
+            <strong id="activeLLMBadge">Built-in Synthesizer</strong>
+          </div>
+          <div class="status-item">
+            <span>Corpus Docs:</span>
+            <strong id="corpusDocCount">480 Clean</strong>
+          </div>
+          <div class="status-item">
+            <span>Custom Poisons:</span>
+            <strong id="customPoisonCount">0 Active</strong>
+          </div>
+        </div>
+        <div class="status-actions">
+          <button class="btn btn-secondary btn-xs" id="openSettingsBtn">⚙️ LLM Config</button>
+          <button class="btn btn-secondary btn-xs" id="openInjectModalBtn">💉 Inject Poison</button>
+        </div>
+      </div>
+
+      <!-- Quick Topics Accordion / List -->
+      <div class="sidebar-section topic-explorer">
+        <div class="section-title-bar">
+          <h3>Knowledge Base Topics</h3>
+          <span class="badge" id="topicCountBadge">16</span>
+        </div>
+        <div class="topic-list" id="topicsContainer">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <button class="btn btn-ghost btn-sm btn-full" id="themeToggleBtn">
+          <span id="themeIcon">☀️</span> <span id="themeLabel">Light Mode</span>
+        </button>
+        <button class="btn btn-ghost btn-sm btn-full" id="resetCorpusBtn" title="Clear trust history & injected poisons">
+          🔄 Reset Trust & Pool
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Chat & Interaction Arena -->
+    <main class="main-content">
+      <!-- Top Navigation Bar -->
+      <header class="top-nav">
+        <div class="nav-left">
+          <button class="icon-btn mobile-only" id="toggleSidebarBtn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <div class="active-session-title" id="sessionTitle">OmniGuard-RAG Playground</div>
+        </div>
+        <div class="nav-center">
+          <div class="defense-selector-wrap">
+            <label for="systemSelect">Target System:</label>
+            <select id="systemSelect" class="form-select select-compact">
+              <option value="omniguard" selected>🛡️ OmniGuard-RAG (4-Ring Defense)</option>
+              <option value="vanilla_rag">❌ Vanilla RAG (No Defense)</option>
+              <option value="drs_only">🔬 DRS Spectral Filter Only</option>
+              <option value="shieldrag">🔄 ShieldRAG (Iterative Reweight)</option>
+              <option value="raguard">🔍 RAGuard / ZKIP (LOO Check)</option>
+              <option value="trishield">📐 TriShieldRAG (3-Signal)</option>
+            </select>
+          </div>
+        </div>
+        <div class="nav-right">
+          <button class="btn btn-primary btn-sm" id="headerCompareBtn">⚖️ Side-by-Side Compare</button>
+        </div>
+      </header>
+
+      <!-- Message History Container -->
+      <div class="chat-container" id="chatContainer">
+        <!-- Welcome Screen -->
+        <div class="welcome-screen" id="welcomeScreen">
+          <div class="welcome-hero">
+            <div class="hero-icon">🛡️⚡</div>
+            <h1>OmniGuard-RAG Interactive Studio</h1>
+            <p class="hero-subtitle">Test and observe robust RAG defense against sophisticated adversarial data poisoning in real-time with your local LLM.</p>
+          </div>
+
+          <div class="feature-grid">
+            <div class="feature-card" data-topic-id="0">
+              <div class="card-icon">🍃</div>
+              <h3>Photosynthesis Mechanism</h3>
+              <p>Explore chlorophyll light-harvesting and glucose synthesis under adversarial keyword stuffing.</p>
+              <span class="card-prompt">"What is the key result regarding chlorophyll?"</span>
+            </div>
+
+            <div class="feature-card" data-topic-id="1">
+              <div class="card-icon">🌐</div>
+              <h3>TCP 3-Way Handshake</h3>
+              <p>Test SYN/ACK connection establishment against stealth collusion attacks.</p>
+              <span class="card-prompt">"Explain the mechanism of syn_ack."</span>
+            </div>
+
+            <div class="feature-card" data-topic-id="2">
+              <div class="card-icon">🧠</div>
+              <h3>Gradient Descent Optimization</h3>
+              <p>Verify learning rate convergence and backpropagation resilience under PIDP injection.</p>
+              <span class="card-prompt">"What is the key result regarding backpropagation?"</span>
+            </div>
+
+            <div class="feature-card" data-topic-id="3">
+              <div class="card-icon">🌌</div>
+              <h3>Black Hole Thermodynamics</h3>
+              <p>Investigate Hawking radiation and event horizons against silent subspace injections.</p>
+              <span class="card-prompt">"How does hawking_radiation function in black hole thermodynamics?"</span>
+            </div>
+          </div>
+
+          <div class="rings-overview-bar">
+            <div class="ring-pill">
+              <span class="pill-dot ring0"></span>
+              <strong>Ring 0:</strong> Query Guard (Suffix Screener)
+            </div>
+            <div class="ring-pill">
+              <span class="pill-dot ring1"></span>
+              <strong>Ring 1:</strong> Spectral DRS (Low-Variance SVD)
+            </div>
+            <div class="ring-pill">
+              <span class="pill-dot ring2"></span>
+              <strong>Ring 2:</strong> Risk Router (Cohesion & Contention)
+            </div>
+            <div class="ring-pill">
+              <span class="pill-dot ring3"></span>
+              <strong>Ring 3:</strong> GWCC Consensus (Clique Isolation)
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat messages dynamically append here -->
+        <div class="messages-list" id="messagesList" style="display: none;"></div>
+      </div>
+
+      <!-- Bottom Chat Controls & Attack Playground -->
+      <footer class="chat-input-area">
+        <!-- Attack Configuration Toolbar -->
+        <div class="attack-toolbar">
+          <div class="attack-selector-group">
+            <label for="attackTypeSelect">⚡ Attack Regime:</label>
+            <select id="attackTypeSelect" class="form-select select-compact">
+              <option value="clean">🛡️ Clean (No Attack)</option>
+              <option value="standard">🎯 Standard Poisoning (Keyword Stuffing)</option>
+              <option value="pidp">💉 PIDP (Adversarial Suffix + Attractor Docs)</option>
+              <option value="collusion_minor">🤝 Minor Collusion Attack (k=2)</option>
+              <option value="collusion_major">👥 Major Collusion Attack (k=3)</option>
+              <option value="collusion_stealth" selected>🥷 Stealth Collusion (CATG Clean Template)</option>
+              <option value="silent">👻 Silent Retrieval (Subspace-Aligned)</option>
+            </select>
+          </div>
+
+          <div class="poison-slider-group" id="poisonSliderGroup">
+            <label for="kPoisonSlider">Poisons (<span id="kPoisonValue">3</span>):</label>
+            <input type="range" id="kPoisonSlider" min="1" max="10" value="3" class="form-range">
+          </div>
+
+          <div class="suffix-toggle-group">
+            <label class="checkbox-label" title="Append adversarial repetitive token suffix to trigger Ring 0">
+              <input type="checkbox" id="suffixCheckbox">
+              <span>Repetitive Suffix</span>
+            </label>
+          </div>
+
+          <div class="trust-toggle-group">
+            <label class="checkbox-label" title="Enable Dynamic Source Trust updates across queries">
+              <input type="checkbox" id="trustCheckbox" checked>
+              <span>Dynamic Trust</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Text Input & Submit Bar -->
+        <div class="input-form-wrapper">
+          <textarea
+            id="queryInput"
+            class="query-textarea"
+            placeholder="Ask anything about the 16 knowledge topics or test an attack..."
+            rows="1"
+          ></textarea>
+          <div class="input-actions">
+            <button class="send-btn" id="sendBtn" title="Send Query">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            </button>
+          </div>
+        </div>
+        <div class="input-hint">
+          <span>💡 <strong>Tip:</strong> Pick an attack regime above, send a prompt, and click <strong>"Inspect Defense"</strong> to observe step-by-step 4-ring telemetry.</span>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Slide-Over 4-Ring Defense Telemetry Drawer -->
+    <aside class="telemetry-drawer" id="telemetryDrawer">
+      <div class="drawer-header">
+        <div class="drawer-title">
+          <h3>🔬 4-Ring Defense Inspector</h3>
+          <span class="badge" id="drawerRouteBadge">Fast Path</span>
+        </div>
+        <button class="icon-btn" id="closeDrawerBtn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="drawer-body" id="drawerContent">
+        <!-- Telemetry content rendered dynamically -->
+      </div>
+    </aside>
+  </div>
+
+  <!-- Multi-System Side-by-Side Comparison Modal -->
+  <div class="modal-backdrop" id="compareModal" style="display: none;">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h3>⚖️ Side-by-Side Multi-Defense Comparison</h3>
+          <p id="compareQuerySubtitle">Evaluating query across all 6 defense architectures under current attack</p>
+        </div>
+        <button class="icon-btn" id="closeCompareModalBtn">✕</button>
+      </div>
+      <div class="modal-body" id="compareModalBody">
+        <div class="loading-spinner-wrap">
+          <div class="spinner"></div>
+          <p>Running benchmark simulation across all 6 systems...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Poison Injection Modal -->
+  <div class="modal-backdrop" id="injectModal" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h3>🧪 Custom Poison Document Injector</h3>
+          <p>Craft and inject an adversarial passage directly into the live corpus</p>
+        </div>
+        <button class="icon-btn" id="closeInjectModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="injectTopicSelect">Target Topic:</label>
+          <select id="injectTopicSelect" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label for="injectTargetAnswer">Attacker Target Claim (Wrong Answer):</label>
+          <input type="text" id="injectTargetAnswer" class="form-input" value="ATTACKER_TARGET" placeholder="e.g. cellular_respiration_breakdown">
+        </div>
+        <div class="form-group">
+          <label for="injectText">Adversarial Document Text:</label>
+          <textarea id="injectText" class="form-textarea" rows="4" placeholder="Enter dense topic keywords and false assertions to fool retriever..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelInjectBtn">Cancel</button>
+        <button class="btn btn-danger" id="submitInjectBtn">Inject into Live Pool</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Local LLM Configuration Modal -->
+  <div class="modal-backdrop" id="settingsModal" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h3>⚙️ Local LLM Backend Configuration</h3>
+          <p>Connect Ollama, LM Studio, vLLM, or use the Built-in Synthesizer</p>
+        </div>
+        <button class="icon-btn" id="closeSettingsModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="llmProviderSelect">Provider Type:</label>
+          <select id="llmProviderSelect" class="form-select">
+            <option value="builtin">Built-in Grounded Local Synthesizer (Zero-dependency)</option>
+            <option value="ollama">Ollama Local Daemon (http://localhost:11434)</option>
+            <option value="openai_compat">LM Studio / vLLM / OpenAI Compatible (http://localhost:1234/v1)</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="endpointUrlGroup" style="display: none;">
+          <label for="llmEndpointUrl">Endpoint URL:</label>
+          <input type="text" id="llmEndpointUrl" class="form-input" placeholder="http://localhost:11434">
+        </div>
+
+        <div class="form-group" id="modelSelectGroup" style="display: none;">
+          <label for="llmModelInput">Model Name:</label>
+          <input type="text" id="llmModelInput" class="form-input" placeholder="e.g. llama3:8b, mistral, qwen2.5">
+        </div>
+
+        <div class="form-group">
+          <label for="llmTempSlider">Temperature (<span id="tempValue">0.2</span>):</label>
+          <input type="range" id="llmTempSlider" min="0.0" max="1.0" step="0.05" value="0.2" class="form-range">
+        </div>
+
+        <div class="status-box" id="llmTestStatusBox">
+          <span class="status-msg">Click "Test Connection" to probe local service.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="testConnectionBtn">🔌 Test Connection</button>
+        <button class="btn btn-primary" id="saveSettingsBtn">Save & Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

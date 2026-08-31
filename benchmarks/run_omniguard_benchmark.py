@@ -1,17 +1,24 @@
 """
 run_omniguard_benchmark.py — 6-system x 7-regime empirical comparison, on a
-real (small) text corpus with real TF-IDF embeddings and real attack text.
+real text corpus with TF-IDF embeddings and literature attack regimes.
 
-PATH A REFACTOR: world-building, REGIMES/build_scenario, fresh_docs, and the
-timed per-system query loop now live in bench_common.py (shared with
-run_ablation_benchmark.py and run_full_evaluation.py) instead of being
-defined here directly -- see bench_common.py's module docstring for why.
-This script is now a thin single-seed entry point: it builds one world at
-SEED=7, DOCS_PER_TOPIC=30 (unchanged from before the refactor), runs the
-same 6-system dispatch it always has, and prints the same table format.
-Verified byte-identical output before/after this refactor (verify_refactor.py).
+Evaluates:
+1. Vanilla RAG (Undefended baseline)
+2. DRS Only (ICLR 2025 SVD Spectral Filter)
+3. ShieldRAG Only (ACM TOIS 2026 Iterative Reweighting)
+4. RAGuard / ZKIP (AAAI 2026 Singleton Leave-One-Out)
+5. TriShieldRAG (arXiv 2026 3-Ring Baseline)
+6. OmniGuard-RAG (4-Ring Defense with Dynamic Trust Store)
 """
 from __future__ import annotations
+import sys
+from pathlib import Path
+
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from unified_rag_defense.drs_filter import DRSFilter
 from unified_rag_defense.omniguard_pipeline import run_omniguard
 from unified_rag_defense import baselines
@@ -19,13 +26,7 @@ from unified_rag_defense.bench_common import (
     build_world, run_system, measure_holdout_fpr, DOCS_PER_TOPIC,
 )
 
-N_QUERIES = 200  # raised from 60: with 6 systems x 7 regimes, 60 queries made several ASR cells
-                  # represent just 1-2 attack instances (noisy, jumpy percentages like 8.3%/3.3%).
-                  # 200 cuts that quantization noise substantially for the numbers reported below.
-                  # Stability was separately checked across 3 independent seeds (7, 11, 23) at
-                  # n=80 each -- OmniGuard-RAG's stealth-collusion ASR stayed at 0-1.25% and Ring 3
-                  # was actually invoked (44-50/80 routed deep) in every seed, so this is not a
-                  # single lucky run.
+N_QUERIES = 200
 SEED = 7
 
 

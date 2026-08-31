@@ -11,4 +11,4 @@ Tests whether GWCC's consensus verdict, once Ring 2 escalates a query to Ring 3,
 
 **Total across all tested levels: 228/654 escalations where GWCC's verdict differed from plain voting on the same input.**
 
-See this script's module docstring (`run_gwcc_diagnostic.py`) for the likely mechanism and what this does and does not imply about Ring 2's contention signal (which is independently verified as a correct detector) vs. Ring 3's aggregation rule specifically.
+See this script's module docstring (`benchmarks/run_gwcc_diagnostic.py`) for the likely mechanism and what this does and does not imply about Ring 2's contention signal (which is independently verified as a correct detector) vs. Ring 3's aggregation rule specifically.

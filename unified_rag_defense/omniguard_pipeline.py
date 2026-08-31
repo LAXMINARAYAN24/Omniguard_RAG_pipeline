@@ -74,7 +74,7 @@ def run_omniguard(query: Query, docs: List[Document], drs: DRSFilter,
                                 ring0_flagged=guard.flagged, ring1_dropped=ring1_dropped)
 
     gwcc = gwcc_consensus(entries, rng)
-    implicated = {d.doc_id for d in top_docs if d.is_poison}
+    implicated = gwcc.implicated_doc_ids
     trust_store.update(top_docs, gwcc.answer, implicated=implicated if gwcc.flagged_subset else set())
     return OmniGuardResult(answer=gwcc.answer, calls=1 + gwcc.calls, route="deep",
                             ring0_flagged=guard.flagged, ring1_dropped=ring1_dropped)

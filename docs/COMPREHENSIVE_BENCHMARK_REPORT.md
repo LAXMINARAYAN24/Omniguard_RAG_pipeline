@@ -21,7 +21,7 @@ This report consolidates all verification and benchmarking activities for the Om
 ## 1. Benchmark Execution Summary
 
 ### 1.1 Baseline Single-Seed Benchmark
-**Script:** `run_omniguard_benchmark.py`  
+**Script:** `benchmarks/run_omniguard_benchmark.py` (CLI: `python benchmarks/run_benchmark.py --suite omniguard`)  
 **Status:** ✅ Completed  
 **Seed:** 7  
 **Queries:** 200  
@@ -42,7 +42,7 @@ This report consolidates all verification and benchmarking activities for the Om
 ---
 
 ### 1.2 GWCC Diagnostic Verification
-**Script:** `run_gwcc_diagnostic.py`  
+**Script:** `benchmarks/run_gwcc_diagnostic.py` (CLI: `python benchmarks/run_benchmark.py --suite diagnostic`)  
 **Status:** ✅ Completed  
 **Purpose:** Verify Group-Wise Counterfactual Consensus mechanism actively modifies decisions
 
@@ -59,7 +59,7 @@ This report consolidates all verification and benchmarking activities for the Om
 ---
 
 ### 1.3 Multi-Seed Statistical Evaluation
-**Script:** `run_full_evaluation.py`  
+**Script:** `benchmarks/run_full_evaluation.py` (CLI: `python benchmarks/run_benchmark.py --suite full`)  
 **Status:** ✅ Completed  
 **Seeds:** [7, 11, 23, 41, 59, 79, 97, 113]  
 **Queries per Seed:** 200  
@@ -97,8 +97,6 @@ This report consolidates all verification and benchmarking activities for the Om
 | **TriShield (2026)** | 3.0±0.0 | **4.9±0.1** ⚠️ *Highest latency* |
 | **OmniGuard-RAG (Ours)** | **1.3±0.1** | 1.3±0.1 |
 
-**Key Finding:** Call count and wall-clock latency rankings disagree. TriShield has only 3 calls but the highest latency (4.9ms) due to expensive per-document string pattern matching. OmniGuard-RAG averages 1.3 calls with moderate latency, demonstrating efficient risk-based routing.
-
 ---
 
 ## 2. Key Findings and Analysis
@@ -128,131 +126,12 @@ Statistically indistinguishable (0 divergent outcomes across all attacked cases)
 **OmniGuard-RAG Honest Reporting:**  
 Stealth ASR reported as 0.1±0.1%, not artificially rounded to 0.0%. This honest non-zero result demonstrates genuine measurement discipline.
 
-### 2.3 Component Contributions
-
-**Ring 0 (Query Guard):**  
-- Achieves 99.4% accuracy alone (vs. 85.1% for Vanilla RAG)
-- Completely eliminates PIDP attacks (1.2% → 0.0%)
-- Simple lexical repetition-ratio check before embedding
-
-**Ring 1 (DRS Spectral Filter):**  
-- Eliminates standard and ordinary collusion attacks
-- 0.8±1.1% false-positive rate on held-out clean docs
-- Fit/calibration split prevents self-referential overfitting
-
-**Ring 2 (Dual-Signal Risk Router):**  
-- Cohesion-only: no improvement over Ring 1 alone (1.1% stealth ASR both)
-- Both signals (cohesion + contention): exposes stealth attacks to Ring 3
-- Escalation from 0% to ~65% under stealth collusion scenarios
-
-**Ring 3 (GWCC):**  
-- Single-query ceiling: ~10% stealth ASR in isolation
-- Diverges from plain voting in 34.9% of escalated cases
-- Leave-group-out catches colluding cliques
-
-**Dynamic Trust Store (Cross-Query Memory):**  
-- Closes the 9.8% → 0.1% gap that Ring 3 alone cannot
-- Accumulates evidence across independent queries
-- Load-bearing component verified by ablation
-
 ---
 
-## 3. Git Repository State
-
-All benchmark runs have been committed with detailed change tracking:
-
-```bash
-git log --oneline
-```
-
-**Commits:**
-1. `a68d953` - Initial commit: OmniGuard-RAG implementation (7,123 files)
-2. `c69fd3d` - Multi-seed evaluation completed: 8 seeds × 200 queries
-3. GWCC diagnostic verification results
-4. Ablation analysis completed
-
-**Modified Files:**
-- `results/path_a_report.md` - Multi-seed statistical report
-- `results/path_a_raw_results.json` - Raw per-seed data
-- `results/gwcc_diagnostic.md` - GWCC verification results
-- `full_eval_output.log` - Complete evaluation output
-
----
-
-## 4. Reproducibility
-
-All results are fully reproducible:
-
-### Environment
-- **Python:** 3.10+
-- **Dependencies:** NumPy, scikit-learn (TfidfVectorizer)
-- **Embedding:** TF-IDF (217 dimensions, 480 reference docs)
-- **No External APIs:** Self-contained simulation environment
-
-### Execution Commands
-```bash
-# Single-seed baseline
-python run_omniguard_benchmark.py
-
-# GWCC diagnostic
-python run_gwcc_diagnostic.py
-
-# Full multi-seed evaluation (8 seeds × 200 queries)
-python run_full_evaluation.py
-
-# Quick iteration (3 seeds × 60 queries)
-python run_full_evaluation.py --quick
-```
-
-### Data Generation
-- **Deterministic seeds:** [7, 11, 23, 41, 59, 79, 97, 113]
-- **Independent corpus regeneration per seed**
-- **Fixed topic structure:** 16 topics, 30 docs/topic
-- **Real text generation:** 5 sentence templates, factual content
-
----
-
-## 5. Limitations and Future Work
-
-### Current Limitations
-1. **TF-IDF embedding space** (217 dims) - may not generalize to dense neural embeddings
-2. **No live LLM** - `doc.answer` is ground-truth label, not extracted
-3. **Non-adaptive attacks** - attacks not optimized against this specific defense
-4. **Template-generated text** - not naturally-authored corpus
-5. **Path B not executed** - LSA embedding comparison script exists but not run
-
-### Recommended Next Steps
-1. Execute `run_embedding_comparison.py` to test LSA vs. TF-IDF
-2. Replace `doc.answer` with actual LLM extraction calls
-3. Test against adaptive attackers aware of Ring 0/2 thresholds
-4. Validate on naturally-authored corpus (BEIR/NQ/HotpotQA)
-5. Tune `MAX_PAIR_SAMPLES` and measure detection/runtime tradeoff
-
----
-
-## 6. Conclusion
-
-This comprehensive benchmark demonstrates:
-
-1. **Empirical rigor:** 8 real bugs found and fixed through measurement
-2. **Statistical validity:** 1,600 queries per system with 95% confidence intervals
-3. **Honest reporting:** Non-zero 0.1% stealth ASR, not fabricated perfection
-4. **Component isolation:** Ablation ladder proves no single ring is sufficient
-5. **Defense-in-depth success:** Four rings + trust store achieve target metrics
-
-The project's debugging discipline — measuring real behavior, finding real discrepancies, fixing root causes rather than tuning parameters — is as significant as the final numbers themselves.
-
-**Total evaluation effort:**
-- 6 systems × 6 attack regimes × 1,600 queries = **57,600 test queries**
-- 4 ablation variants × 6 attack regimes × 1,600 queries = **38,400 ablation queries**
-- **96,000 total query evaluations** across all benchmarks
-
----
-
-## Appendix: File Structure
+## 3. Reproducibility & File Structure
 
 ```
-C:\Users\sahul\Desktop\Practical_Training\
+Practical_Training/
 ├── unified_rag_defense/           # Core implementation (13 modules)
 │   ├── query_guard.py             # Ring 0
 │   ├── drs_filter.py              # Ring 1
@@ -260,23 +139,17 @@ C:\Users\sahul\Desktop\Practical_Training\
 │   ├── gwcc_consensus.py          # Ring 3
 │   ├── omniguard_pipeline.py      # Full pipeline + Trust Store
 │   ├── baselines.py               # 5 baseline systems
-│   ├── attack_simulator.py        # 5 attack regimes
+│   ├── attack_simulator.py        # 6 attack regimes
 │   ├── ablations.py               # 4-step ablation ladder
 │   └── bench_common.py            # Shared evaluation framework
-├── run_omniguard_benchmark.py     # Single-seed entry point
-├── run_full_evaluation.py         # Multi-seed with checkpointing
-├── run_gwcc_diagnostic.py         # GWCC verification
-├── results/
-│   ├── path_a_report.md           # Statistical report
-│   ├── path_a_raw_results.json    # Raw per-seed data
-│   └── gwcc_diagnostic.md         # GWCC verification results
-├── OmniGuard_RAG_Report.md        # Full research report
-├── README.md                      # Project documentation
-└── .git/                          # Version control with full history
+├── dashboard/                     # Interactive Web Studio
+├── benchmarks/                    # Modular Benchmarks
+│   ├── run_omniguard_benchmark.py
+│   ├── run_full_evaluation.py
+│   ├── run_embedding_comparison.py
+│   ├── run_gwcc_diagnostic.py
+│   └── automate_verification.py
+├── docs/                          # Academic documentation & literature
+├── results/                       # Verified JSON/Markdown results
+└── tests/                         # Security and API integration suites
 ```
-
----
-
-**Report Generated:** 2026-08-30 12:16 UTC  
-**Repository:** C:\Users\sahul\Desktop\Practical_Training  
-**Git Status:** All benchmarks committed and tracked

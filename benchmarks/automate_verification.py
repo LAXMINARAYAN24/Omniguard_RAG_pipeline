@@ -6,11 +6,11 @@ Runs the complete test suite, tracks changes with git, and generates
 comprehensive reports. Designed for unattended execution with full monitoring.
 
 Usage:
-    python automate_verification.py                    # Full pipeline
-    python automate_verification.py --quick            # Quick mode (3 seeds)
-    python automate_verification.py --skip-baseline    # Skip single-seed baseline
-    python automate_verification.py --skip-gwcc        # Skip GWCC diagnostic
-    python automate_verification.py --skip-multiseed   # Skip multi-seed eval
+    python benchmarks/automate_verification.py                    # Full pipeline
+    python benchmarks/automate_verification.py --quick            # Quick mode (3 seeds)
+    python benchmarks/automate_verification.py --skip-baseline    # Skip single-seed baseline
+    python benchmarks/automate_verification.py --skip-gwcc        # Skip GWCC diagnostic
+    python benchmarks/automate_verification.py --skip-multiseed   # Skip multi-seed eval
 """
 import argparse
 import json
@@ -20,6 +20,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 class Colors:
@@ -65,14 +70,6 @@ def print_warning(message: str):
 def run_command(cmd: List[str], description: str, timeout: int = 600) -> Tuple[bool, str, float]:
     """
     Run a shell command and return success status, output, and elapsed time.
-
-    Args:
-        cmd: Command to execute as list of strings
-        description: Human-readable description for logging
-        timeout: Timeout in seconds (default: 10 minutes)
-
-    Returns:
-        (success, output, elapsed_time)
     """
     print_info(f"Running: {description}")
     print(f"  Command: {' '.join(cmd)}")
@@ -85,7 +82,8 @@ def run_command(cmd: List[str], description: str, timeout: int = 600) -> Tuple[b
             text=True,
             timeout=timeout,
             encoding='utf-8',
-            errors='replace'
+            errors='replace',
+            cwd=str(REPO_ROOT)
         )
         elapsed = time.time() - start_time
 
@@ -110,15 +108,7 @@ def run_command(cmd: List[str], description: str, timeout: int = 600) -> Tuple[b
 def git_commit(message: str, files: List[str] = None) -> bool:
     """
     Commit changes to git with the given message.
-
-    Args:
-        message: Commit message
-        files: Optional list of specific files to add; if None, adds all changes
-
-    Returns:
-        True if commit succeeded, False otherwise
     """
-    # Add files
     if files:
         for f in files:
             success, output, _ = run_command(['git', 'add', f], f"Adding {f}", timeout=30)
@@ -130,14 +120,12 @@ def git_commit(message: str, files: List[str] = None) -> bool:
             print_error("Failed to stage changes")
             return False
 
-    # Check if there's anything to commit
     success, output, _ = run_command(['git', 'diff', '--cached', '--quiet'],
                                      "Checking for staged changes", timeout=30)
-    if success:  # No changes (exit code 0 means no diff)
+    if success:
         print_info("No changes to commit")
         return True
 
-    # Commit
     commit_msg = f"{message}\n\nCo-Authored-By: Claude Code <noreply@anthropic.com>"
     success, output, _ = run_command(['git', 'commit', '-m', commit_msg],
                                      "Committing changes", timeout=60)
@@ -150,7 +138,6 @@ def extract_metrics_from_output(output: str) -> Dict:
     lines = output.split('\n')
 
     for line in lines:
-        # Look for OmniGuard-RAG results line
         if 'OmniGuard-RAG' in line and '|' in line:
             parts = [p.strip() for p in line.split('|')]
             if len(parts) >= 7:
@@ -166,10 +153,8 @@ def extract_metrics_from_output(output: str) -> Dict:
                 except (IndexError, ValueError):
                     pass
 
-        # Look for DRS FPR
         if 'held-out false-positive rate' in line and '%' in line:
             try:
-                # Extract percentage value
                 parts = line.split(':')
                 if len(parts) >= 2:
                     fpr_str = parts[1].split('%')[0].strip()
@@ -183,9 +168,6 @@ def extract_metrics_from_output(output: str) -> Dict:
 def run_pipeline(args) -> Dict:
     """
     Execute the complete verification pipeline.
-
-    Returns:
-        Dictionary containing results and timing information
     """
     results = {
         'start_time': datetime.now(timezone.utc).isoformat(),
@@ -198,7 +180,7 @@ def run_pipeline(args) -> Dict:
     if not args.skip_baseline:
         print_section("STAGE 1: Baseline Single-Seed Benchmark")
         success, output, elapsed = run_command(
-            ['python', 'run_omniguard_benchmark.py'],
+            [sys.executable, 'benchmarks/run_omniguard_benchmark.py'],
             "Single-seed benchmark (seed=7, n=200)",
             timeout=300
         )
@@ -220,7 +202,7 @@ def run_pipeline(args) -> Dict:
     if not args.skip_gwcc:
         print_section("STAGE 2: GWCC Diagnostic Verification")
         success, output, elapsed = run_command(
-            ['python', 'run_gwcc_diagnostic.py'],
+            [sys.executable, 'benchmarks/run_gwcc_diagnostic.py'],
             "GWCC mechanism verification",
             timeout=300
         )
@@ -241,7 +223,7 @@ def run_pipeline(args) -> Dict:
     if not args.skip_multiseed:
         print_section("STAGE 3: Multi-Seed Statistical Evaluation")
 
-        cmd = ['python', 'run_full_evaluation.py']
+        cmd = [sys.executable, 'benchmarks/run_full_evaluation.py']
         if args.quick:
             cmd.append('--quick')
             description = "Multi-seed evaluation (quick mode: 3 seeds × 60 queries)"
@@ -293,9 +275,6 @@ def generate_summary_report(results: Dict, output_path: Path):
             lines.append(f"- {error}")
         lines.append("")
 
-    lines.append("## Stage Results")
-    lines.append("")
-
     for stage_name, stage_data in results['stages'].items():
         status = "✓ PASS" if stage_data['success'] else "✗ FAIL"
         lines.append(f"### {stage_name.upper()} — {status}")
@@ -315,7 +294,7 @@ def generate_summary_report(results: Dict, output_path: Path):
 
     lines.append("---")
     lines.append("")
-    lines.append("*This report was generated automatically by automate_verification.py*")
+    lines.append("*This report was generated automatically by benchmarks/automate_verification.py*")
 
     output_path.write_text('\n'.join(lines), encoding='utf-8')
     print_success(f"Summary report written to {output_path}")
@@ -334,7 +313,7 @@ def main():
                        help='Skip GWCC diagnostic verification')
     parser.add_argument('--skip-multiseed', action='store_true',
                        help='Skip multi-seed evaluation')
-    parser.add_argument('--output-dir', type=Path, default=Path('results'),
+    parser.add_argument('--output-dir', type=Path, default=REPO_ROOT / 'results',
                        help='Output directory for reports (default: results/)')
 
     args = parser.parse_args()
@@ -371,7 +350,6 @@ def main():
     git_commit(f"Automated verification pipeline completed: {timestamp}",
                [str(summary_path), str(json_path)])
 
-    # Print final summary
     print_section("PIPELINE COMPLETE")
     print(f"Total elapsed time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} minutes)")
     print(f"Overall status: {'✓ SUCCESS' if results['success'] else '✗ FAILED'}")
