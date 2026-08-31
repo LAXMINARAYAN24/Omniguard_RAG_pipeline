@@ -3,6 +3,13 @@ rag_defense_engine.py — Core RAG Defense Pipeline & Deep Telemetry Capture
 
 Bridges user queries, attack regimes, and multi-system comparisons with the
 underlying unified_rag_defense architecture.
+
+Instruments:
+- Ring 0: Suffix screening & repetition ratio
+- Ring 1: Spectral SVD low-variance projection filter
+- Ring 2: Semantic cohesion and answer contention risk router
+- Ring 3: Group-Wise Counterfactual Consensus (GWCC) with empirical LOO/LGO causal sensitivity
+- Dynamic Trust Store: Adaptive cross-query trust weighting
 """
 from dataclasses import dataclass, field, asdict
 import json
@@ -93,6 +100,9 @@ class Ring3Telemetry:
     excluded_doc_ids: List[str]
     consensus_answer: Optional[str]
     additional_calls: int
+    counterfactual_loo_scores: Dict[str, float] = field(default_factory=dict)
+    counterfactual_lgo_scores: Dict[str, float] = field(default_factory=dict)
+    sensitivity_summary: str = ""
 
 
 @dataclass
@@ -248,6 +258,7 @@ class RAGDefenseEngine:
                                      persist_trust: bool = True) -> SystemExecutionResult:
         """
         Executes OmniGuard-RAG with deep telemetry capture across Rings 0, 1, 2, and 3.
+        Includes empirical causal counterfactual sensitivity analysis.
         """
         t0 = time.time()
         # --- Ring 0: Query Guard ---
@@ -346,10 +357,29 @@ class RAGDefenseEngine:
             escalation_reason=escalation_reason
         )
 
+        # --- Compute Empirical Counterfactual Causal Sensitivity ---
+        full_ans = weighted_majority(entries)
+        loo_scores: Dict[str, float] = {}
+        for i, (d_i, _) in enumerate(entries):
+            subset = [e for j, e in enumerate(entries) if j != i]
+            sub_ans = weighted_majority(subset)
+            # Causal sensitivity = 1.0 if removing d_i changes the full answer, else 0.0
+            loo_scores[d_i.doc_id] = 1.0 if sub_ans != full_ans else 0.0
+
+        lgo_scores: Dict[str, float] = {}
+        n_ent = len(entries)
+        for i in range(n_ent):
+            for j in range(i + 1, n_ent):
+                d_i, d_j = entries[i][0], entries[j][0]
+                pair_key = f"{d_i.doc_id}+{d_j.doc_id}"
+                subset = [entries[k] for k in range(n_ent) if k != i and k != j]
+                sub_ans = weighted_majority(subset)
+                lgo_scores[pair_key] = 1.0 if sub_ans != full_ans else 0.0
+
         # --- Execution Path ---
         trust_updates = []
         if decision.route == "fast":
-            final_answer = weighted_majority(entries)
+            final_answer = full_ans
             calls = 1
             ring3_tel = Ring3Telemetry(
                 invoked=False,
@@ -358,7 +388,10 @@ class RAGDefenseEngine:
                 pairwise_cliques_implicated=[],
                 excluded_doc_ids=[],
                 consensus_answer=final_answer,
-                additional_calls=0
+                additional_calls=0,
+                counterfactual_loo_scores=loo_scores,
+                counterfactual_lgo_scores=lgo_scores,
+                sensitivity_summary="Fast Path: High semantic cohesion and low contention; unanimous or uncontested context."
             )
             if persist_trust:
                 prev_scores = {d.doc_id: d.trust_score for d in top_docs}
@@ -379,6 +412,14 @@ class RAGDefenseEngine:
             calls = 1 + gwcc.calls
             implicated_ids = list(gwcc.implicated_doc_ids)
 
+            sens_notes = []
+            if gwcc.loo_implicated_ids:
+                sens_notes.append(f"LOO singleton flip on {len(gwcc.loo_implicated_ids)} doc(s)")
+            if gwcc.pair_implicated_ids:
+                sens_notes.append(f"LGO clique flip on {len(gwcc.pair_implicated_ids)} pair(s)")
+            if not sens_notes:
+                sens_notes.append("Stable consensus under leave-one-out and leave-group-out perturbations")
+
             ring3_tel = Ring3Telemetry(
                 invoked=True,
                 full_set_answer=weighted_majority(entries),
@@ -386,7 +427,10 @@ class RAGDefenseEngine:
                 pairwise_cliques_implicated=gwcc.pair_implicated_ids,
                 excluded_doc_ids=implicated_ids,
                 consensus_answer=final_answer,
-                additional_calls=gwcc.calls
+                additional_calls=gwcc.calls,
+                counterfactual_loo_scores=loo_scores,
+                counterfactual_lgo_scores=lgo_scores,
+                sensitivity_summary="; ".join(sens_notes)
             )
 
             if persist_trust:

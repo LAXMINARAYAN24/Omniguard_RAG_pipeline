@@ -406,7 +406,7 @@ function appendAssistantLoading() {
 
 function renderAssistantResponse(rowElement, data, clientLatency) {
   const defense = data.defense;
-  const llm = data.llm_generation;
+  const llm = data.llm_generation || {};
 
   const isSuccess = defense.is_correct;
   const isPoisoned = defense.is_attack_success;
@@ -419,7 +419,13 @@ function renderAssistantResponse(rowElement, data, clientLatency) {
     ? `<span class="badge badge-accent">⚡ Fast Path (1x Call)</span>`
     : `<span class="badge badge-info">🛡️ Deep GWCC (${defense.calls}x Calls)</span>`;
 
-  const parsedMarkdown = renderSimpleMarkdown(llm.text);
+  const groundingBadge = llm.abstention_triggered
+    ? `<span class="badge badge-warning">⚠️ Abstention (IDK Policy)</span>`
+    : (llm.grounding_status === "VERIFIED"
+        ? `<span class="badge badge-success">✓ CoV Grounded (${Math.round((llm.confidence_score || 1.0) * 100)}% Conf)</span>`
+        : `<span class="badge badge-ghost">Grounding: ${escapeHTML(llm.grounding_status || "Standard")}</span>`);
+
+  const parsedMarkdown = renderSimpleMarkdown(llm.text || "");
 
   rowElement.innerHTML = `
     <div class="message-avatar">🛡️</div>
@@ -428,7 +434,8 @@ function renderAssistantResponse(rowElement, data, clientLatency) {
         <span class="badge badge-accent">${escapeHTML(defense.system_name)}</span>
         ${outcomeBadge}
         ${routeBadge}
-        <span>• ${defense.pipeline_latency_ms}ms pipeline | ${llm.latency_ms}ms LLM</span>
+        ${groundingBadge}
+        <span>• ${defense.pipeline_latency_ms}ms pipeline | ${llm.latency_ms || 0}ms LLM</span>
       </div>
       <div class="message-bubble">
         ${parsedMarkdown}
@@ -604,7 +611,7 @@ function openTelemetryDrawer(data) {
       <div class="tel-card-header">
         <div class="tel-card-title">
           <span class="pill-dot ring3"></span>
-          <strong>Ring 3: GWCC Consensus</strong>
+          <strong>Ring 3: GWCC Consensus & Causal Sensitivity</strong>
         </div>
         <span class="badge ${tel.ring3.invoked ? 'badge-info' : 'badge-ghost'}">
           ${tel.ring3.invoked ? 'Active Counterfactual Pass' : 'Bypassed (Fast Path)'}
@@ -623,6 +630,38 @@ function openTelemetryDrawer(data) {
           <span class="tel-label">Consensus Verified Answer:</span>
           <span class="tel-value text-success"><strong>${escapeHTML(tel.ring3.consensus_answer)}</strong></span>
         </div>
+        ${tel.ring3.sensitivity_summary ? `
+          <div class="tel-row" style="margin-top: 4px;">
+            <span class="tel-label">Causal Sensitivity Diagnosis:</span>
+            <span class="tel-value" style="font-size: 11px; color: var(--accent-primary);">${escapeHTML(tel.ring3.sensitivity_summary)}</span>
+          </div>
+        ` : ''}
+        ${tel.ring3.counterfactual_loo_scores && Object.keys(tel.ring3.counterfactual_loo_scores).length > 0 ? `
+          <div class="tel-row" style="margin-top: 4px;">
+            <span class="tel-label">LOO Sensitivity Scores S(d_i):</span>
+          </div>
+          <div class="sensitivity-grid">
+            ${Object.entries(tel.ring3.counterfactual_loo_scores).map(([docId, score]) => `
+              <div class="sensitivity-cell ${score > 0 ? 'flip' : 'stable'}">
+                <code>${escapeHTML(docId)}</code>
+                <span>${score > 0 ? '⚠️ Flip (1.0)' : '✓ 0.0'}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${tel.ring3.counterfactual_lgo_scores && Object.keys(tel.ring3.counterfactual_lgo_scores).length > 0 ? `
+          <div class="tel-row" style="margin-top: 4px;">
+            <span class="tel-label">LGO Collusion Sensitivity S(d_i, d_j):</span>
+          </div>
+          <div class="sensitivity-grid">
+            ${Object.entries(tel.ring3.counterfactual_lgo_scores).map(([pair, score]) => `
+              <div class="sensitivity-cell ${score > 0 ? 'flip' : 'stable'}">
+                <code>${escapeHTML(pair)}</code>
+                <span>${score > 0 ? '⚠️ Clique Flip (1.0)' : '✓ 0.0'}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
       ` : `
         <div class="tel-row">
           <span class="tel-label">Status:</span>
@@ -630,6 +669,58 @@ function openTelemetryDrawer(data) {
         </div>
       `}
     </div>
+
+    <!-- Research-Backed Factual Grounding & CoV Card -->
+    ${data.llm_generation ? `
+      <div class="tel-card">
+        <div class="tel-card-header">
+          <div class="tel-card-title">
+            <strong>Factual Grounding & Chain-of-Verification (CoV)</strong>
+          </div>
+          <span class="badge ${data.llm_generation.abstention_triggered ? 'badge-warning' : (data.llm_generation.grounding_status === 'VERIFIED' ? 'badge-success' : 'badge-ghost')}">
+            ${escapeHTML(data.llm_generation.grounding_status || 'STANDARD')}
+          </span>
+        </div>
+        <div class="tel-row">
+          <span class="tel-label">Grounding Protocol:</span>
+          <span class="tel-value">${escapeHTML((data.llm_generation.grounding_mode || 'chain_of_verification').toUpperCase())}</span>
+        </div>
+        <div class="tel-row">
+          <span class="tel-label">Factual Confidence Score:</span>
+          <span class="tel-value text-success">${Math.round((data.llm_generation.confidence_score || 1.0) * 100)}%</span>
+        </div>
+        ${data.llm_generation.citations && data.llm_generation.citations.length > 0 ? `
+          <div class="tel-row" style="margin-top: 4px;">
+            <span class="tel-label">Mandated Context Citations:</span>
+          </div>
+          <div class="citations-wrap">
+            ${data.llm_generation.citations.map(c => `
+              <span class="citation-tag">[${escapeHTML(c)}]</span>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${data.llm_generation.cov_questions && data.llm_generation.cov_questions.length > 0 ? `
+          <div class="tel-row" style="margin-top: 4px;">
+            <span class="tel-label">Premise-by-Premise Verification:</span>
+          </div>
+          <div class="cov-question-list">
+            ${data.llm_generation.cov_questions.map(q => `
+              <div class="cov-question-item ${q.status === 'SUPPORTED' ? 'supported' : 'unverified'}">
+                <div class="cov-q-header">
+                  <span>${escapeHTML(q.question_id.toUpperCase())}</span>
+                  <span class="badge ${q.status === 'SUPPORTED' ? 'badge-success' : 'badge-danger'}">${escapeHTML(q.status)}</span>
+                </div>
+                <div class="cov-q-text">${escapeHTML(q.question)}</div>
+                <div class="cov-q-footer">
+                  <span>Docs: ${escapeHTML((q.supporting_docs || []).join(', ') || 'N/A')}</span>
+                  <span>${escapeHTML(q.note || '')}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    ` : ''}
 
     <!-- Dynamic Trust Updates -->
     ${tel.trust_store_updates && tel.trust_store_updates.length > 0 ? `

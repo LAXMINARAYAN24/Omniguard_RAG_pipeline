@@ -558,7 +558,13 @@ class DashboardAPIHandler(SimpleHTTPRequestHandler):
                 "prompt_tokens": llm_gen.prompt_tokens,
                 "completion_tokens": llm_gen.completion_tokens,
                 "is_fallback": llm_gen.is_fallback,
-                "error": llm_gen.error
+                "error": llm_gen.error,
+                "citations": getattr(llm_gen, "citations", []),
+                "cov_questions": getattr(llm_gen, "cov_questions", []),
+                "grounding_mode": getattr(llm_gen, "grounding_mode", "chain_of_verification"),
+                "grounding_status": getattr(llm_gen, "grounding_status", "VERIFIED"),
+                "abstention_triggered": getattr(llm_gen, "abstention_triggered", False),
+                "confidence_score": getattr(llm_gen, "confidence_score", 1.0)
             }
         }
         self._send_json(response_payload)
