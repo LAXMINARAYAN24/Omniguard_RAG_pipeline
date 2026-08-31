@@ -44,7 +44,13 @@ class ClaimExtractor:
         if not text or not text.strip():
             return []
 
-        raw_sentences = _SENTENCE_SPLIT_REGEX.split(text.strip())
+        # Strip citation annotations and metadata tags before sentence splitting
+        cleaned_text = re.sub(r"\[Doc:[^\]]*\]", "", text, flags=re.IGNORECASE)
+        cleaned_text = re.sub(r"\[(?:Chunk|Hash|Source|Ref):[^\]]*\]", "", cleaned_text, flags=re.IGNORECASE)
+        cleaned_text = re.sub(r"\[\d+\]", "", cleaned_text)
+        cleaned_text = re.sub(r"\bref\s*#?\d+\b", "", cleaned_text, flags=re.IGNORECASE)
+
+        raw_sentences = _SENTENCE_SPLIT_REGEX.split(cleaned_text.strip())
         claims: List[AtomicClaim] = []
         counter = 0
 
@@ -57,9 +63,9 @@ class ClaimExtractor:
             clauses = _CLAUSE_SPLIT_REGEX.split(sent)
             for clause in clauses:
                 clause = clause.strip().rstrip(",;:- ")
-                # Strip reference markers like 'ref #1', '[1]', '(ref 2)' that cause spurious NLI conflicts
-                clean_clause = re.sub(r"\bref\s*#?\d+\b", "", clause, flags=re.IGNORECASE)
-                clean_clause = re.sub(r"\[\d+\]", "", clean_clause)
+                # Strip reference markers like 'ref #1', '[1]', '(ref 2)', '[Doc: ...]'
+                clean_clause = re.sub(r"\[.*?\]", "", clause)
+                clean_clause = re.sub(r"\bref\s*#?\d+\b", "", clean_clause, flags=re.IGNORECASE)
                 clean_clause = re.sub(r"\s+", " ", clean_clause).strip().rstrip(",;:- ")
                 if not clean_clause or len(clean_clause.split()) < 3:
                     continue
