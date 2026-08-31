@@ -160,14 +160,17 @@ class DashboardAPIHandler(SimpleHTTPRequestHandler):
             body = b'{"error": "Internal JSON serialization error", "status": "error"}'
             status = 500
 
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        if extra_headers:
-            for k, v in extra_headers.items():
-                self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionError, BrokenPipeError, OSError):
+            pass
 
     def _send_error(self, message: str, status: int = 400, extra_headers: Optional[Dict[str, str]] = None):
         """Helper to return standardized structured error messages."""

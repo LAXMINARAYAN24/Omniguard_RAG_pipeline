@@ -123,7 +123,7 @@ class OllamaClient(BaseLLMClient):
                 f"{self.base_url}/api/tags",
                 headers={"User-Agent": "OmniGuard-Dashboard-Client"}
             )
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
+            with urllib.request.urlopen(req, timeout=0.4) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     models = [m.get("name") for m in data.get("models", [])]
@@ -218,7 +218,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 f"{self.base_url}/models",
                 headers={"User-Agent": "OmniGuard-Dashboard-Client", "Authorization": f"Bearer {self.api_key}"}
             )
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
+            with urllib.request.urlopen(req, timeout=0.4) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     models = [m.get("id") for m in data.get("data", [])]
@@ -498,14 +498,24 @@ class LLMClientManager:
         self.builtin = BuiltinLocalEngine()
         self.active_provider = "builtin"
         self.active_model = "builtin-omniguard-v1"
+        self._last_probe_time: float = 0.0
+        self._cached_probe: Optional[Dict[str, Any]] = None
 
-    def probe_all(self) -> Dict[str, Any]:
-        """Check availability of all potential local backends."""
+    def probe_all(self, force: bool = False) -> Dict[str, Any]:
+        """Check availability of all potential local backends with caching."""
+        now = time.time()
+        if not force and self._cached_probe is not None and (now - self._last_probe_time) < 3.0:
+            # Return cached result with current active provider/model
+            result = dict(self._cached_probe)
+            result["active_provider"] = self.active_provider
+            result["active_model"] = self.active_model
+            return result
+
         ollama_ok, ollama_msg = self.ollama.is_available()
         openai_ok, openai_msg = self.openai_compat.is_available()
         builtin_ok, builtin_msg = self.builtin.is_available()
 
-        return {
+        self._cached_probe = {
             "active_provider": self.active_provider,
             "active_model": self.active_model,
             "providers": {
@@ -529,6 +539,8 @@ class LLMClientManager:
                 }
             }
         }
+        self._last_probe_time = now
+        return self._cached_probe
 
     def set_config(self, provider: str, url: Optional[str] = None,
                    model: Optional[str] = None, api_key: Optional[str] = None):
