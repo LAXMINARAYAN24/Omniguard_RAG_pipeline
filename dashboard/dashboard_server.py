@@ -26,6 +26,38 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 from dashboard.llm_client import GLOBAL_LLM_CLIENT, validate_endpoint_url
 from dashboard.rag_defense_engine import GLOBAL_RAG_ENGINE
 from unified_rag_defense.topics_data import TOPICS
+from omniguard_production.config import load_env_file, HF_TOKEN
+from omniguard_production.pipeline import OmniGuardProductionPipeline
+from omniguard_production.trust.provenance import DocumentMetadata
+
+# Load environment configuration from .env if present
+load_env_file()
+
+# Enterprise Production Pipeline Control Plane
+GLOBAL_PRODUCTION_PIPELINE = OmniGuardProductionPipeline()
+
+
+def _seed_production_corpus(pipeline: OmniGuardProductionPipeline):
+    """Pre-populates the production pipeline with verified grounding articles across topics."""
+    for t in TOPICS:
+        keywords_str = ", ".join(t["keywords"])
+        text = (
+            f"Regarding {t['name'].replace('_', ' ')}: The established scientific consensus confirms that "
+            f"the primary answer is {t['answer'].replace('_', ' ')}. Key concepts involved include {keywords_str}. "
+            f"Peer-reviewed studies verify that {t['keywords'][0]} and {t['keywords'][1]} play critical roles."
+        )
+        pipeline.ingest_document(
+            raw_text=text,
+            metadata=DocumentMetadata(
+                title=f"Encyclopedia of {t['name'].replace('_', ' ').title()}",
+                publisher_domain="verified-encyclopedia.org",
+                author="Science Review Board",
+                tenant_id="default"
+            )
+        )
+
+
+_seed_production_corpus(GLOBAL_PRODUCTION_PIPELINE)
 
 TOPIC_MAP = {i: t for i, t in enumerate(TOPICS)}
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -35,7 +67,7 @@ MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", 1048576))  # 1MB d
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", 180))
 ALLOWED_ORIGINS_ENV = os.environ.get(
     "ALLOWED_ORIGINS",
-    "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8899,http://localhost:8899"
+    "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8080,http://localhost:8080,http://127.0.0.1:8899,http://localhost:8899"
 )
 ALLOWED_ORIGINS_SET: Set[str] = {o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()}
 
@@ -236,6 +268,8 @@ class DashboardAPIHandler(SimpleHTTPRequestHandler):
             self._handle_topics()
         elif path == "/api/llm/status":
             self._handle_llm_status()
+        elif path == "/api/production/status":
+            self._handle_production_status()
         else:
             # Serve static files (index.html, styles.css, app.js)
             if path in ("", "/"):
@@ -272,11 +306,16 @@ class DashboardAPIHandler(SimpleHTTPRequestHandler):
                 self._handle_llm_test(body)
             elif path == "/api/llm/config":
                 self._handle_llm_config(body)
+            elif path == "/api/production/query":
+                self._handle_production_query(body)
+            elif path == "/api/production/ingest":
+                self._handle_production_ingest(body)
             else:
                 self._send_error(f"Unknown endpoint: {path}", status=404)
         except Exception as e:
-            # Safe generic error logging without leaking internals to client
-            self._send_error("An unexpected error occurred while processing the request.", status=500)
+            import traceback
+            traceback.print_exc()
+            self._send_error(f"An unexpected error occurred while processing the request: {str(e)}", status=500)
 
     # --- Endpoint Handlers with Strict Validation ---
 
@@ -488,7 +527,8 @@ class DashboardAPIHandler(SimpleHTTPRequestHandler):
 
             elapsed_ms = (time.time() - t0) * 1000.0
             # Retrieve top-k for LLM context
-            from unified_rag_defense.retrieval import effective_embedding, top_k
+            from unified_rag_defense.query_guard import effective_embedding
+            from unified_rag_defense.retrieval import top_k
             q_emb = effective_embedding(active_query, engine.world)
             entries = top_k(q_emb, pool, k=5)
             retrieved_docs_for_llm = [
@@ -679,6 +719,100 @@ class DashboardAPIHandler(SimpleHTTPRequestHandler):
     def _handle_corpus_reset(self, body: Dict[str, Any]):
         GLOBAL_RAG_ENGINE.reset_trust_store()
         self._send_json({"status": "reset_successful", "message": "Trust store and custom poisons cleared."})
+
+    def _handle_production_status(self):
+        pipeline = GLOBAL_PRODUCTION_PIPELINE
+        dense_count = len(pipeline.dense_retriever.chunks)
+        metrics = pipeline.metrics_collector.get_summary()
+        res = {
+            "status": "active",
+            "version": "2.0.0-enterprise",
+            "embedding_model": pipeline.embedding_provider.model_name,
+            "embedding_dimension": pipeline.embedding_provider.dimension,
+            "indexed_chunks": dense_count,
+            "metrics": metrics
+        }
+        self._send_json(res)
+
+    def _handle_production_query(self, body: Dict[str, Any]):
+        query_text = str(body.get("query", "")).strip()
+        if not query_text:
+            self._send_error("Query text cannot be empty.")
+            return
+
+        if len(query_text) > 2000:
+            self._send_error("Query text exceeds maximum length of 2000 characters.")
+            return
+
+        tenant_id = str(body.get("tenant_id", "default")).strip()
+        if len(tenant_id) > 64:
+            self._send_error("tenant_id exceeds maximum length of 64 characters.")
+            return
+
+        try:
+            top_k = int(body.get("top_k", 5))
+            if top_k < 1 or top_k > 30:
+                self._send_error("top_k must be between 1 and 30.")
+                return
+        except (ValueError, TypeError):
+            self._send_error("top_k must be a valid integer.")
+            return
+
+        enable_cov = bool(body.get("enable_cov", True))
+
+        pipeline = GLOBAL_PRODUCTION_PIPELINE
+        result = pipeline.query(
+            query_text=query_text,
+            top_k=top_k,
+            tenant_id=tenant_id,
+            enable_cov=enable_cov
+        )
+        self._send_json(result.to_dict())
+
+    def _handle_production_ingest(self, body: Dict[str, Any]):
+        raw_text = str(body.get("raw_text", "")).strip()
+        if not raw_text:
+            self._send_error("raw_text cannot be empty.")
+            return
+
+        if len(raw_text) > 50000:
+            self._send_error("raw_text exceeds maximum length of 50000 characters.")
+            return
+
+        title = str(body.get("title", "Untitled Document")).strip()[:256]
+        publisher_domain = str(body.get("publisher_domain", "internal.corp")).strip()[:128]
+        author = str(body.get("author", "Anonymous")).strip()[:128]
+        tenant_id = str(body.get("tenant_id", "default")).strip()[:64]
+        doc_id = body.get("doc_id")
+        if doc_id:
+            doc_id = str(doc_id).strip()[:64]
+
+        meta = DocumentMetadata(
+            title=title,
+            publisher_domain=publisher_domain,
+            author=author,
+            tenant_id=tenant_id
+        )
+
+        pipeline = GLOBAL_PRODUCTION_PIPELINE
+        doc = pipeline.ingest_document(raw_text=raw_text, metadata=meta, doc_id=doc_id)
+
+        self._send_json({
+            "status": "ingested",
+            "doc_id": doc.doc_id,
+            "title": doc.metadata.title,
+            "chunks_count": len(doc.chunks),
+            "chunks": [
+                {
+                    "chunk_id": c.chunk_id,
+                    "state": c.state.value,
+                    "trust_score": round(float(c.trust_score), 4),
+                    "security_flags": c.security_flags,
+                    "clean_snippet": c.clean_text[:120]
+                }
+                for c in doc.chunks
+            ]
+        })
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> ThreadingHTTPServer:
