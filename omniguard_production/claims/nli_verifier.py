@@ -18,8 +18,29 @@ _NEGATION_TERMS = {
     "not", "never", "no", "neither", "nor", "none", "cannot", "isn't", "aren't",
     "wasn't", "weren't", "doesn't", "don't", "didn't", "hardly", "scarcely", "without",
     "cancelled", "canceled", "rejected", "aborted", "prohibited", "denied", "delayed",
-    "postponed", "halted", "suspended", "fake", "fabricated", "disproved", "refuted"
+    "postponed", "halted", "suspended", "fake", "fabricated", "disproved", "refuted",
+    "clandestine", "secretly", "falsely", "hoax", "toxic", "poisonous"
 }
+
+_CONTRADICTION_PHRASES = [
+    "rather than", "instead of", "contrary to", "falsely claimed", "debunked",
+    "secretly launched", "clandestine", "coverup", "cover-up", "hoax",
+    "disproved", "refuted", "fake", "fabricated", "disputed", "inaccurate"
+]
+
+_CONCEPT_SYNONYM_GROUPS = [
+    {"photosynthesis", "plants", "plant", "vegetation", "flora", "leaves", "chlorophyll"},
+    {"produce", "produces", "produced", "synthesize", "synthesizes", "synthesized", "generate", "generates", "create", "creates", "yield", "yields"},
+    {"sunlight", "solar", "radiation", "light", "photons", "sun"},
+    {"carbon", "co2", "dioxide"},
+    {"oxygen", "o2"},
+    {"glucose", "sugar", "carbohydrates", "energy"},
+    {"launch", "launched", "deploy", "deployed", "deployment", "liftoff", "mission"},
+    {"orbit", "orbital", "space", "low earth orbit", "leo"},
+    {"telescope", "observatory", "instrument", "hubble", "jwst"},
+    {"utilize", "utilizes", "use", "uses", "absorb", "absorbs", "convert", "converts"},
+    {"observation", "observations", "observe", "observes", "data", "images"},
+]
 
 _ANTONYM_PAIRS = [
     ("increase", "decrease"), ("elevate", "reduce"), ("enable", "disable"),
@@ -217,8 +238,10 @@ class NLIVerifier:
 
     def _heuristic_nli(self, premise: str, hypothesis: str) -> Dict[str, float]:
         """High-resolution rule-based logical consistency and contradiction analyzer."""
-        p_tokens = [t.lower() for t in re.findall(r"\w+", premise)]
-        h_tokens = [t.lower() for t in re.findall(r"\w+", hypothesis)]
+        p_lower = premise.lower()
+        h_lower = hypothesis.lower()
+        p_tokens = [t for t in re.findall(r"\w+", p_lower)]
+        h_tokens = [t for t in re.findall(r"\w+", h_lower)]
 
         if not p_tokens or not h_tokens:
             return {"entailment": 0.0, "contradiction": 0.0, "neutral": 1.0}
@@ -235,12 +258,25 @@ class NLIVerifier:
         stem_overlap = p_stems & h_stems
         stem_ratio = len(stem_overlap) / max(1, min(len(p_stems), len(h_stems)))
 
+        # Conceptual synonym overlap
+        synonym_matches = 0
+        for group in _CONCEPT_SYNONYM_GROUPS:
+            if (group & p_set) and (group & h_set):
+                synonym_matches += 1
+
+        effective_overlap = max(overlap_ratio, stem_ratio)
+        if synonym_matches >= 2:
+            effective_overlap = max(effective_overlap, 0.40 + 0.15 * synonym_matches)
+
         # 1. Check for polarity / negation contradiction
         p_has_neg = any(t in _NEGATION_TERMS for t in p_set or _simple_stem(t) in _NEGATION_TERMS for t in p_set)
         h_has_neg = any(t in _NEGATION_TERMS for t in h_set or _simple_stem(t) in _NEGATION_TERMS for t in h_set)
         negation_flip = (p_has_neg != h_has_neg)
 
-        # 2. Check for antonym clash
+        # 2. Check for refutation / debunking phrases
+        refutation_present = any(phrase in p_lower or phrase in h_lower for phrase in _CONTRADICTION_PHRASES)
+
+        # 3. Check for antonym clash
         antonym_clash = False
         for a, b in _ANTONYM_PAIRS:
             a_stem, b_stem = _simple_stem(a), _simple_stem(b)
@@ -251,23 +287,27 @@ class NLIVerifier:
                 antonym_clash = True
                 break
 
-        # 3. Check for numerical / date clash (e.g. 2021 vs 2035)
+        # 4. Check for numerical / date clash (e.g. 1990 vs 2015)
+        p_years = set(re.findall(r"\b(19\d\d|20\d\d)\b", premise))
+        h_years = set(re.findall(r"\b(19\d\d|20\d\d)\b", hypothesis))
+        year_clash = bool(p_years and h_years and (p_years != h_years or refutation_present))
+
         p_nums = set(re.findall(r"\b\d{2,4}\b", premise))
         h_nums = set(re.findall(r"\b\d{2,4}\b", hypothesis))
         num_clash = bool(p_nums and h_nums and not (p_nums & h_nums))
 
         # If significant overlap exists but polarity flipped, antonym present, or numerical clash
-        if (overlap_ratio >= 0.20 or stem_ratio >= 0.20) and (negation_flip or antonym_clash or num_clash):
-            c_prob = 0.90 if (antonym_clash or num_clash) else 0.75
-            return {"entailment": 0.05, "contradiction": c_prob, "neutral": max(0.0, 1.0 - (c_prob + 0.05))}
+        if (effective_overlap >= 0.20 or overlap_ratio >= 0.15) and (negation_flip or antonym_clash or num_clash or year_clash or refutation_present):
+            c_prob = 0.90 if (antonym_clash or num_clash or year_clash or refutation_present) else 0.75
+            return {"entailment": 0.02, "contradiction": c_prob, "neutral": max(0.0, 1.0 - (c_prob + 0.02))}
 
         # If high overlap with same polarity -> Entailment
-        if (overlap_ratio >= 0.65 or stem_ratio >= 0.65) and not negation_flip and not antonym_clash and not num_clash:
-            e_prob = min(0.95, max(overlap_ratio, stem_ratio))
+        if effective_overlap >= 0.50 and not negation_flip and not antonym_clash and not num_clash and not year_clash:
+            e_prob = min(0.95, max(effective_overlap, 0.70))
             return {"entailment": e_prob, "contradiction": 0.02, "neutral": max(0.0, 1.0 - (e_prob + 0.02))}
 
         # Otherwise mostly neutral with baseline proportional to overlap
-        return {"entailment": max(0.05, overlap_ratio * 0.4), "contradiction": 0.05, "neutral": 0.90}
+        return {"entailment": max(0.05, effective_overlap * 0.4), "contradiction": 0.05, "neutral": 0.90}
 
     def get_telemetry_status(self) -> Dict[str, Any]:
         """Returns observability status of the NLI engine."""

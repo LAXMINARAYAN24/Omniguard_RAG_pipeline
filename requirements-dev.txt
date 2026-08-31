@@ -1,0 +1,11 @@
+# OmniGuard-RAG Development & Optional Neural Extensions
+-r requirements.txt
+
+# Testing & Quality Assurance
+pytest>=8.0.0
+pytest-cov>=4.1.0
+
+# Optional: Neural Transformers & Sentence Embeddings (for neural DRS evaluation)
+sentence-transformers>=2.5.0
+transformers>=4.38.0
+torch>=2.2.0
