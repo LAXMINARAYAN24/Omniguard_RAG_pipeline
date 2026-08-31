@@ -363,6 +363,139 @@ class TestProductionDefenseMechanismsLive(unittest.TestCase):
         self.assertGreater(len(result.verified_chunks), 0)
         self.assertTrue(all(c.metadata.publisher_domain != "shadow-leaks.net" for c in result.verified_chunks))
 
+    def test_production_pipeline_uses_real_drs_engine(self):
+        """Wire-level verification: Ensure DRSEngine is on the critical retrieval path and evaluated during pipeline.query()."""
+        pipeline = OmniGuardProductionPipeline(tenant_id="physics")
+
+        # Ingest clean physics documents
+        for i in range(8):
+            pipeline.ingest_document(
+                raw_text=f"The gravitational constant G is approximately 6.67430e-11 m^3 kg^-1 s^-2 according to NIST standard ref #{i+1}.",
+                metadata=DocumentMetadata(
+                    title=f"NIST Physics Standard {i+1}",
+                    publisher_domain="nist.gov",
+                    source_id=f"nist_g_{i+1}",
+                    tenant_id="physics"
+                )
+            )
+
+        self.assertTrue(pipeline.drs_engine.is_calibrated(), "DRS Engine must be auto-calibrated after document ingestion")
+
+        # Execute query
+        res = pipeline.query("What is the gravitational constant G?", tenant_id="physics")
+
+        # Assert DRS telemetry was captured and executed during the live query
+        self.assertIn("ring_1_drs", res.ring_telemetry, "ring_1_drs must be present in query telemetry")
+        drs_telemetry = res.ring_telemetry["ring_1_drs"]
+        self.assertTrue(drs_telemetry.get("is_calibrated"), "DRS telemetry must indicate calibrated status")
+        self.assertIn("max_drs_score", drs_telemetry, "DRS telemetry must contain calculated max_drs_score")
+        self.assertGreaterEqual(drs_telemetry["max_drs_score"], 0.0)
+
+    def test_production_pipeline_uses_llm_callback(self):
+        """Wire-level verification: Ensure custom LLM generator callback receives verified source prompts."""
+        call_log = []
+
+        def sentinel_llm(system_prompt: str, user_prompt: str) -> str:
+            call_log.append({
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt
+            })
+            return "The gravitational constant is exactly 6.67430e-11 m^3 kg^-1 s^-2. [Doc: NIST Physics Standard 1 | Chunk: 0 | Hash: a1b2c3d4]"
+
+        pipeline = OmniGuardProductionPipeline(
+            llm_generator_fn=sentinel_llm,
+            tenant_id="physics"
+        )
+
+        pipeline.ingest_document(
+            raw_text="The gravitational constant G is approximately 6.67430e-11 m^3 kg^-1 s^-2 according to NIST standard ref #1.",
+            metadata=DocumentMetadata(
+                title="NIST Physics Standard 1",
+                publisher_domain="nist.gov",
+                source_id="nist_g_1",
+                tenant_id="physics"
+            )
+        )
+
+        res = pipeline.query("What is the value of G?", tenant_id="physics")
+
+        # Verify sentinel LLM was called with the assembled prompt
+        self.assertEqual(len(call_log), 1, "sentinel_llm must be invoked exactly once during generation")
+        self.assertIn("gravitational constant", call_log[0]["user_prompt"])
+        self.assertIn("NIST Physics Standard 1", call_log[0]["user_prompt"])
+        self.assertIn("6.67430e-11", res.answer_text)
+
+    def test_lgo_changes_decision(self):
+        """Causal verification: Removing the colluding group causally changes consensus and reduces contradiction."""
+        graph_builder = EvidenceGraph(embedding_provider=self.embedding_provider)
+        analyzer = LGOConsensusAnalyzer(dominance_ratio=1.4)
+
+        # 3 clean chunks
+        clean_chunks = [
+            ProductionChunk(
+                chunk_id="c1", doc_id="d1",
+                text="The speed of sound in dry air at 20 C is 343 meters per second.",
+                clean_text="The speed of sound in dry air at 20 C is 343 meters per second.",
+                trust_score=0.95,
+                metadata=DocumentMetadata(publisher_domain="noaa.gov", source_id="s1")
+            ),
+            ProductionChunk(
+                chunk_id="c2", doc_id="d2",
+                text="At 20 degrees Celsius, sound travels at 343 m/s through air.",
+                clean_text="At 20 degrees Celsius, sound travels at 343 m/s through air.",
+                trust_score=0.90,
+                metadata=DocumentMetadata(publisher_domain="physics.org", source_id="s2")
+            ),
+        ]
+
+        # 2 colluding poison chunks
+        poison_chunks = [
+            ProductionChunk(
+                chunk_id="p1", doc_id="d3",
+                text="The speed of sound in air is 999 meters per second.",
+                clean_text="The speed of sound in air is 999 meters per second.",
+                trust_score=0.70,
+                metadata=DocumentMetadata(publisher_domain="fake-acoustics.com", source_id="s3")
+            ),
+            ProductionChunk(
+                chunk_id="p2", doc_id="d4",
+                text="Sound travels at 999 m/s in air as proven by new experiments.",
+                clean_text="Sound travels at 999 m/s in air as proven by new experiments.",
+                trust_score=0.70,
+                metadata=DocumentMetadata(publisher_domain="fake-acoustics.com", source_id="s4")
+            ),
+        ]
+
+        all_chunks = clean_chunks + poison_chunks
+        for c in all_chunks:
+            c.embedding = self.embedding_provider.embed_text(c.clean_text)
+
+        contra_mat = np.zeros((4, 4), dtype=np.float64)
+        for i in range(2):
+            for j in range(2, 4):
+                contra_mat[i, j] = 0.90
+                contra_mat[j, i] = 0.90
+
+        # Run on full set (clean + colluding poison)
+        G_full = graph_builder.build_graph(all_chunks, contradiction_matrix=contra_mat)
+        clusters_full = graph_builder.detect_communities(G_full)
+        decision_full = analyzer.analyze_consensus(clusters_full, all_chunks, contradiction_matrix=contra_mat)
+
+        # In full set, poison cluster is quarantined, lgo_delta is positive
+        self.assertEqual(len(decision_full.quarantined_chunks), 2)
+        poison_cluster = next(c for c in clusters_full if any(ch.chunk_id == "p1" for ch in c.chunks))
+        delta = decision_full.counterfactual_deltas.get(poison_cluster.cluster_id, 0.0)
+        self.assertGreater(delta, 0.0, "Removing poison cluster must produce a positive contradiction reduction delta")
+
+        # Run on clean set only (counterfactual baseline)
+        G_clean = graph_builder.build_graph(clean_chunks, contradiction_matrix=np.zeros((2, 2)))
+        clusters_clean = graph_builder.detect_communities(G_clean)
+        decision_clean = analyzer.analyze_consensus(clusters_clean, clean_chunks, contradiction_matrix=np.zeros((2, 2)))
+
+        self.assertEqual(len(decision_clean.quarantined_chunks), 0)
+        self.assertEqual(len(decision_clean.selected_chunks), 2)
+        self.assertNotEqual(decision_full.quarantined_chunks, decision_clean.quarantined_chunks)
+
 
 if __name__ == "__main__":
     unittest.main()

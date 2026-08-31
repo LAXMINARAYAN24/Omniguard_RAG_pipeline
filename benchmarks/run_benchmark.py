@@ -30,6 +30,9 @@ SUITE_MAP = {
     "embedding": "benchmarks/run_embedding_comparison.py",
     "pipeline": "benchmarks/automate_verification.py",
     "verify": "benchmarks/automate_verification.py",
+    "production": "evaluation/real_inference/run_production_eval.py",
+    "real": "evaluation/real_inference/run_production_eval.py",
+    "majority_collusion": "evaluation/real_inference/run_majority_collusion_experiment.py",
 }
 
 
@@ -38,11 +41,13 @@ def main():
         description="Unified Benchmark & Evaluation CLI for OmniGuard-RAG",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Suites:
-  omniguard   6-System empirical comparison on 7 attack regimes (single seed)
-  full        Statistically rigorous multi-seed evaluation (mean ± 95% CI)
-  diagnostic  GWCC Ring 3 consensus divergence diagnostic
-  embedding   Sparse TF-IDF vs. dense LSA embedding space comparison
-  pipeline    Automated verification pipeline with git tracking & reports
+  omniguard          Track A: 6-System empirical comparison on 7 attack regimes (controlled seed)
+  full               Track A: Statistically rigorous multi-seed evaluation (mean ± 95% CI)
+  production / real  Track B: Real-inference production evaluation (real corpora, real LLM, zero shortcuts)
+  majority_collusion Track B: 4 Colluding shadow domains vs. 1 independent authority & clean same-domain FPR
+  diagnostic         GWCC Ring 3 consensus divergence diagnostic
+  embedding          Sparse TF-IDF vs. dense LSA embedding space comparison
+  pipeline           Automated verification pipeline with git tracking & reports
 """
     )
     parser.add_argument(
