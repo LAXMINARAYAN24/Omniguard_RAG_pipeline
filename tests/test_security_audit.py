@@ -122,10 +122,19 @@ def test_live_server_security_headers_and_cors(base_url="http://127.0.0.1:8998")
         server.server_close()
 
 
+import unittest
+
+
+class TestSecurityAudit(unittest.TestCase):
+    def test_ssrf(self):
+        test_ssrf_validator()
+
+    def test_rate_limiting(self):
+        test_rate_limiter()
+
+    def test_live_security(self):
+        test_live_server_security_headers_and_cors()
+
+
 if __name__ == "__main__":
-    test_ssrf_validator()
-    test_rate_limiter()
-    test_live_server_security_headers_and_cors()
-    print("\n" + "="*70)
-    print("🛡️ ALL SECURITY AUDIT TESTS PASSED SUCCESSFULLY!")
-    print("="*70)
+    unittest.main()

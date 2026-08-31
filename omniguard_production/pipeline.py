@@ -34,6 +34,7 @@ from .gateway.query_gateway import QuerySecurityGateway
 # Embeddings & Retrieval
 from .embeddings.base import EmbeddingProvider
 from .embeddings.neural_provider import DenseNeuralEmbeddingProvider
+from .embeddings.drs_engine import DRSEngine, DRSModel, DRSConfig, DRSScoreResult
 from .embeddings.density_normalizer import DensityNormalizer
 from .retrieval.dense_retriever import DenseRetriever
 from .retrieval.bm25_retriever import BM25Retriever
@@ -88,6 +89,7 @@ class PipelineExecutionResult:
                 "citation_precision": round(float(self.citations.citation_precision), 4),
                 "citation_recall": round(float(self.citations.citation_recall), 4),
                 "grounding_ratio": round(float(self.citations.grounding_ratio), 4),
+                "citation_entailment_precision": round(float(self.citations.citation_entailment_precision), 4),
                 "is_fully_grounded": self.citations.is_fully_grounded
             },
             "verified_chunks": [
@@ -117,13 +119,18 @@ class PipelineExecutionResult:
                 "revised_response": self.cov_result.revised_response,
                 "unsupported_claims_removed": self.cov_result.unsupported_claims_removed,
                 "grounding_score": round(float(self.cov_result.grounding_score), 4),
+                "corroboration_ratio": round(float(self.cov_result.corroboration_ratio), 4),
                 "verification_checks": [
                     {
                         "question": check.question,
                         "target_claim": check.target_claim,
                         "verification_answer": check.verification_answer,
                         "is_supported": check.is_supported,
-                        "supporting_chunk_id": check.supporting_chunk_id
+                        "supporting_chunk_id": check.supporting_chunk_id,
+                        "supporting_domain": check.supporting_domain,
+                        "entailment_score": check.entailment_score,
+                        "contradiction_score": check.contradiction_score,
+                        "corroborating_domains": check.corroborating_domains
                     }
                     for check in self.cov_result.verification_checks
                 ],
@@ -150,6 +157,9 @@ class OmniGuardProductionPipeline:
         self.injection_screener = InjectionScreener()
         self.query_gateway = QuerySecurityGateway(self.injection_screener)
 
+        # Ring 1: Spectral SVD DRS Engine
+        self.drs_engine = DRSEngine()
+
         # Retrieval
         self.dense_retriever = DenseRetriever(self.embedding_provider)
         self.bm25_retriever = BM25Retriever()
@@ -165,7 +175,7 @@ class OmniGuardProductionPipeline:
 
         # Generation & Abstention
         self.prompt_assembler = PromptAssembler()
-        self.citation_tracker = CitationTracker()
+        self.citation_tracker = CitationTracker(nli_verifier=self.nli_verifier)
         self.cov_engine = ChainOfVerificationEngine(
             llm_generate_fn=self.llm_generator_fn,
             claim_extractor=self.claim_extractor,
@@ -177,30 +187,49 @@ class OmniGuardProductionPipeline:
         self.trust_store = PersistentTrustStore()
         self.metrics_collector = ProductionMetricsCollector()
 
+    def calibrate_drs(self, clean_chunks: List[ProductionChunk]):
+        """Fits SVD low-variance directions and calibrates threshold on clean reference embeddings."""
+        clean_embs = []
+        for c in clean_chunks:
+            if c.embedding is not None:
+                clean_embs.append(c.embedding)
+            else:
+                emb = self.embedding_provider.embed_text(c.clean_text)
+                c.embedding = emb
+                clean_embs.append(emb)
+
+        if clean_embs:
+            arr = np.array(clean_embs, dtype=np.float64)
+            self.drs_engine.calibrate_from_embeddings(arr)
+
     def ingest_document(self,
                         raw_text: str,
                         metadata: Optional[DocumentMetadata] = None,
                         doc_id: Optional[str] = None) -> ProductionDocument:
-        """Ingests, sanitizes, security-screens, chunks, and indexes a document."""
+        """Ingests, sanitizes, security-screens, chunks, embeds, and indexes a document."""
         meta = metadata or DocumentMetadata(tenant_id=self.tenant_id)
         doc = self.parser_sandbox.process_document(raw_text, doc_id=doc_id, metadata=meta)
 
         # Pre-index security screen on all chunks
         for chunk in doc.chunks:
+            # Embed chunk text
+            chunk.embedding = self.embedding_provider.embed_text(chunk.clean_text)
+
             screen_report = self.injection_screener.screen_text(chunk.clean_text)
             if screen_report["is_suspicious"]:
                 chunk.security_flags.extend(screen_report["matched_flags"])
                 chunk.state = DocumentState.SUSPICIOUS
                 chunk.trust_score = max(0.1, chunk.trust_score - 0.40)
-                # Record event in trust store
-                self.trust_store.record_event(TrustEvent(
-                    event_type=TrustEventType.INJECTION_FLAGGED,
+                # Record bounded hierarchical penalty in trust store
+                self.trust_store.record_hierarchical_penalty(
                     tenant_id=meta.tenant_id,
-                    entity_type="domain",
-                    entity_id=meta.publisher_domain,
-                    delta=-0.30,
-                    reason=f"Malicious pattern detected in chunk {chunk.chunk_id}: {screen_report['matched_flags']}"
-                ))
+                    publisher_domain=meta.publisher_domain,
+                    source_id=meta.source_id,
+                    document_id=doc.doc_id,
+                    content_hash=chunk.content_hash,
+                    reason=f"Malicious pattern in chunk {chunk.chunk_id}: {screen_report['matched_flags']}",
+                    base_penalty=-0.40
+                )
             else:
                 chunk.state = DocumentState.SCANNED
                 # Update trust with effective reputation from ledger
@@ -219,6 +248,10 @@ class OmniGuardProductionPipeline:
             self.bm25_retriever.index_chunks(self.dense_retriever.chunks)
             for c in valid_chunks:
                 c.state = DocumentState.INDEXED
+
+            # Auto-calibrate DRS on initial clean corpus if uncalibrated
+            if not self.drs_engine.is_calibrated() and len(self.dense_retriever.chunks) >= 6:
+                self.calibrate_drs(self.dense_retriever.chunks)
 
         return doc
 
@@ -286,16 +319,14 @@ class OmniGuardProductionPipeline:
         span_ret.finish(candidates_count=len(selected_candidates))
 
         # =========================================================================
-        # Span 3: Ring 1 & Ring 2 — Calibrated Multi-Signal Risk Routing
+        # Span 3: Ring 1 & Ring 2 — Calibrated Multi-Signal Risk Routing & DRS
         # =========================================================================
         span_risk = tracer.start_span("ring_1_2_risk_routing")
-        # Estimate spectral directional relative shift
-        drs_shift_score = 0.10
-        if len(selected_candidates) > 1 and all(c.embedding is not None for c in selected_candidates):
-            emb_matrix = np.array([c.embedding for c in selected_candidates])
-            mean_vec = np.mean(emb_matrix, axis=0)
-            dists = [np.linalg.norm(c.embedding - mean_vec) for c in selected_candidates]
-            drs_shift_score = float(np.max(dists) - np.min(dists))
+
+        # Evaluate spectral SVD Directional Relative Shifts (Ring 1)
+        drs_report: DRSScoreResult = self.drs_engine.evaluate_retrieval_set(selected_candidates)
+        drs_shift_score = drs_report.max_drs_score / max(1.0, drs_report.threshold) if drs_report.is_calibrated else 0.10
+        drs_shift_score = float(min(1.0, max(0.0, drs_shift_score)))
 
         risk_report = self.risk_router.evaluate_retrieval_set(
             query_text=cleaned_query,
@@ -307,11 +338,12 @@ class OmniGuardProductionPipeline:
         span_risk.finish(
             routing_action=routing_action,
             composite_risk=risk_report["composite_risk_score"],
-            nli_intensity=risk_report["nli_contradiction_intensity"]
+            nli_intensity=risk_report["nli_contradiction_intensity"],
+            drs_spectral_anomaly=drs_report.is_spectral_anomaly_detected
         )
 
         # =========================================================================
-        # Span 4: Ring 3 — Graph-Theoretic GWCC v2 Consensus
+        # Span 4: Ring 3 — Graph-Theoretic GWCC v2 Consensus with Lineage Gating
         # =========================================================================
         span_gwcc = tracer.start_span("ring_3_gwcc_consensus")
         consensus_decision: Optional[GWCCDecision] = None
@@ -321,26 +353,28 @@ class OmniGuardProductionPipeline:
             contra_mat = np.array(risk_report["contradiction_matrix"]) if risk_report["contradiction_matrix"] else None
             G = self.evidence_graph.build_graph(selected_candidates, contradiction_matrix=contra_mat)
             clusters = self.evidence_graph.detect_communities(G)
-            consensus_decision = self.lgo_analyzer.analyze_consensus(clusters, selected_candidates)
+            consensus_decision = self.lgo_analyzer.analyze_consensus(clusters, selected_candidates, contradiction_matrix=contra_mat)
 
             verified_chunks = consensus_decision.selected_chunks
             quarantined_chunks.extend(consensus_decision.quarantined_chunks)
 
-            # Record trust ledger updates for quarantined chunks
+            # Record hierarchical trust ledger updates for quarantined chunks
             for q_chunk in consensus_decision.quarantined_chunks:
-                self.trust_store.record_event(TrustEvent(
-                    event_type=TrustEventType.GWCC_QUARANTINE,
+                self.trust_store.record_hierarchical_penalty(
                     tenant_id=active_tenant,
-                    entity_type="domain",
-                    entity_id=q_chunk.metadata.publisher_domain,
-                    delta=-0.25,
-                    reason=f"Isolated during GWCC Ring 3 consensus evaluation: {consensus_decision.explanation}"
-                ))
+                    publisher_domain=q_chunk.metadata.publisher_domain,
+                    source_id=q_chunk.metadata.source_id,
+                    document_id=q_chunk.doc_id,
+                    content_hash=q_chunk.content_hash,
+                    reason=f"Isolated during GWCC Ring 3 consensus evaluation: {consensus_decision.explanation}",
+                    base_penalty=-0.35
+                )
 
             span_gwcc.finish(
                 status=consensus_decision.status,
                 selected_count=len(verified_chunks),
-                quarantined_count=len(quarantined_chunks)
+                quarantined_count=len(quarantined_chunks),
+                lgo_delta=consensus_decision.lgo_delta
             )
         else:
             span_gwcc.finish(status="BYPASS_SAFE_PASS", selected_count=len(verified_chunks))
@@ -369,8 +403,9 @@ class OmniGuardProductionPipeline:
                 quarantined_chunks=quarantined_chunks,
                 ring_telemetry={
                     "ring_0": q_report,
-                    "ring_1_2": risk_report,
-                    "ring_3": consensus_decision.__dict__ if consensus_decision else None
+                    "ring_1_drs": drs_report.__dict__,
+                    "ring_2_risk": risk_report,
+                    "ring_3_gwcc": consensus_decision.__dict__ if consensus_decision else None
                 },
                 trace=trace_data
             )
@@ -393,15 +428,26 @@ class OmniGuardProductionPipeline:
                 f"[Doc: {title} | Chunk: {top_c.chunk_index} | Hash: {h_short}]"
             )
 
-        # Execute Chain-of-Verification (CoV)
+        # Execute Chain-of-Verification (CoV) with independent corroboration pool
         cov_res = None
         final_response = raw_response
         if enable_cov and verified_chunks:
-            cov_res = self.cov_engine.run_verification(cleaned_query, raw_response, verified_chunks)
+            # The corroboration pool includes verified chunks + other indexed chunks for cross-lineage checking
+            corroboration_pool = list(self.dense_retriever.chunks) if self.dense_retriever.chunks else verified_chunks
+            cov_res = self.cov_engine.run_verification(
+                query_text=cleaned_query,
+                baseline_response=raw_response,
+                verified_chunks=verified_chunks,
+                independent_corroboration_pool=corroboration_pool
+            )
             final_response = cov_res.revised_response
 
-        # Citation Tracking & Grounding Audit
-        citation_audit = self.citation_tracker.audit_response(final_response, verified_chunks)
+        # Citation Tracking & Grounding Audit with NLI Entailment
+        citation_audit = self.citation_tracker.audit_response(
+            generated_text=final_response,
+            allowed_chunks=verified_chunks,
+            verify_semantic_entailment=True
+        )
         post_decision = self.abstention_engine.evaluate_post_generation(
             generated_text=final_response,
             citation_audit=citation_audit,
@@ -410,7 +456,8 @@ class OmniGuardProductionPipeline:
         span_gen.finish(
             generation_state=post_decision.state,
             citation_precision=citation_audit.citation_precision,
-            grounding_ratio=citation_audit.grounding_ratio
+            grounding_ratio=citation_audit.grounding_ratio,
+            citation_entailment_precision=citation_audit.citation_entailment_precision
         )
 
         trace_data = tracer.finish_trace()
@@ -433,8 +480,9 @@ class OmniGuardProductionPipeline:
             cov_result=cov_res,
             ring_telemetry={
                 "ring_0": q_report,
-                "ring_1_2": risk_report,
-                "ring_3": consensus_decision.__dict__ if consensus_decision else None
+                "ring_1_drs": drs_report.__dict__,
+                "ring_2_risk": risk_report,
+                "ring_3_gwcc": consensus_decision.__dict__ if consensus_decision else None
             },
             trace=trace_data
         )

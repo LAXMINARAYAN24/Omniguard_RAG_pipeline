@@ -57,18 +57,22 @@ class ClaimExtractor:
             clauses = _CLAUSE_SPLIT_REGEX.split(sent)
             for clause in clauses:
                 clause = clause.strip().rstrip(",;:- ")
-                if not clause or len(clause.split()) < 3:
+                # Strip reference markers like 'ref #1', '[1]', '(ref 2)' that cause spurious NLI conflicts
+                clean_clause = re.sub(r"\bref\s*#?\d+\b", "", clause, flags=re.IGNORECASE)
+                clean_clause = re.sub(r"\[\d+\]", "", clean_clause)
+                clean_clause = re.sub(r"\s+", " ", clean_clause).strip().rstrip(",;:- ")
+                if not clean_clause or len(clean_clause.split()) < 3:
                     continue
 
                 counter += 1
                 claim_id = f"{source_chunk_id or 'doc'}_c{counter}"
 
                 # Rule-based subject/predicate identification
-                subject, pred, obj = self._parse_spo(clause)
+                subject, pred, obj = self._parse_spo(clean_clause)
 
                 claims.append(AtomicClaim(
                     claim_id=claim_id,
-                    text=clause,
+                    text=clean_clause,
                     source_chunk_id=source_chunk_id,
                     subject=subject,
                     predicate=pred,

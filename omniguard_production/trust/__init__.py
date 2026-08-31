@@ -11,6 +11,7 @@ from .trust_store import (
     TrustEventType,
     TrustEvent,
     TrustSnapshot,
+    TrustWeights,
     PersistentTrustStore
 )
 
@@ -22,5 +23,6 @@ __all__ = [
     "TrustEventType",
     "TrustEvent",
     "TrustSnapshot",
+    "TrustWeights",
     "PersistentTrustStore",
 ]

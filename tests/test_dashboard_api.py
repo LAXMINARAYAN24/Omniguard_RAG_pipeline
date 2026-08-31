@@ -175,5 +175,13 @@ def run_all_tests():
         server.server_close()
 
 
+import unittest
+
+
+class TestDashboardAPI(unittest.TestCase):
+    def test_dashboard_api_suite(self):
+        run_all_tests()
+
+
 if __name__ == "__main__":
-    run_all_tests()
+    unittest.main()
