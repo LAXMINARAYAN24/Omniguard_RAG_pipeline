@@ -96,30 +96,19 @@ class LGOConsensusAnalyzer:
             cl_chunk_ids = {c.chunk_id for c in cl.chunks}
             remaining_indices = [chunk_to_idx[c.chunk_id] for c in original_chunks if c.chunk_id not in cl_chunk_ids and c.chunk_id in chunk_to_idx]
 
-            if contradiction_matrix is not None and contradiction_matrix.size > 0 and len(remaining_indices) > 1:
-                sub_mat = contradiction_matrix[np.ix_(remaining_indices, remaining_indices)]
-                sub_contra = float(np.sum(sub_mat))
+            if contradiction_matrix is not None and contradiction_matrix.size > 0:
+                if len(remaining_indices) > 1:
+                    sub_mat = contradiction_matrix[np.ix_(remaining_indices, remaining_indices)]
+                    sub_contra = float(np.sum(sub_mat))
+                else:
+                    sub_contra = 0.0
                 contra_drop = max(0.0, total_contra_all - sub_contra)
                 lgo_contra_deltas[cl.cluster_id] = round(contra_drop, 4)
             else:
                 lgo_contra_deltas[cl.cluster_id] = round(cl.evidence_weight, 4)
 
-        # Sort clusters by evidence weight descending
-        clusters = sorted(clusters, key=lambda x: x.evidence_weight, reverse=True)
-        best_cluster = clusters[0]
-        second_cluster = clusters[1] if len(clusters) > 1 else None
-
-        weight_1 = best_cluster.evidence_weight
-        weight_2 = second_cluster.evidence_weight if second_cluster else 0.0
-        ratio = weight_1 / max(1e-4, weight_2)
-        lgo_delta = round(weight_1 - weight_2, 4)
-
-        quarantined: List[ProductionChunk] = []
-        for c in clusters:
-            if c.cluster_id != best_cluster.cluster_id:
-                quarantined.extend(c.chunks)
-
-        # Check if there is genuine contradiction across the clusters
+        # Check if there is genuine contradiction across the clusters FIRST
+        # (needed before deciding whether to use causal LGO signal or weight-based selection)
         max_cross_cluster_contra = 0.0
         if contradiction_matrix is not None and contradiction_matrix.size > 0:
             for i, cl_a in enumerate(clusters):
@@ -137,6 +126,71 @@ class LGOConsensusAnalyzer:
                                 max_cross_cluster_contra = c_val
 
         has_active_contradiction = (total_contra_all > 0.25) or (max_cross_cluster_contra >= 0.35)
+
+        # When active contradiction exists, use CAUSAL LGO and lineage independence to identify poison source
+        if has_active_contradiction and len(clusters) >= 2:
+            non_adv_clusters = [cl for cl in clusters if not cl.is_adversarial_candidate]
+            adv_clusters = [cl for cl in clusters if cl.is_adversarial_candidate]
+
+            if non_adv_clusters and adv_clusters:
+                # Clear adversarial separation: select non-adversarial, quarantine adversarial
+                clean_clusters = non_adv_clusters
+                poison_clusters = adv_clusters
+            else:
+                # No binary adversarial flag separation: rank by evidence weight (incorporates independence, trust, and size)
+                sorted_by_credibility = sorted(clusters, key=lambda c: c.evidence_weight, reverse=True)
+                clean_clusters = [sorted_by_credibility[0]]
+                poison_clusters = sorted_by_credibility[1:]
+
+            quarantined = []
+            for pcl in poison_clusters:
+                quarantined.extend(pcl.chunks)
+
+            selected = []
+            for ccl in clean_clusters:
+                selected.extend(ccl.chunks)
+
+            avg_trust_selected = float(np.mean([c.trust_score for c in selected])) if selected else 0.0
+            poison_delta = max((lgo_contra_deltas.get(pcl.cluster_id, 0.0) for pcl in poison_clusters), default=0.0)
+
+            return GWCCDecision(
+                status=ConsensusStatus.COLLUSION_DISCARDED,
+                selected_chunks=selected,
+                quarantined_chunks=quarantined,
+                confidence_score=round(min(1.0, avg_trust_selected), 4),
+                selected_cluster_id=clean_clusters[0].cluster_id if len(clean_clusters) == 1 else None,
+                lgo_delta=round(poison_delta, 4),
+                counterfactual_deltas=lgo_contra_deltas,
+                explanation=(
+                    f"Leave-group-out causal test identified {len(poison_clusters)} contradictory cluster(s) "
+                    f"as contradiction source (max contradiction drop {poison_delta:.3f}). "
+                    f"Quarantined {len(quarantined)} poisoned chunks, selected {len(selected)} from {len(clean_clusters)} clean cluster(s)."
+                ),
+                group_telemetry={
+                    "total_clusters": len(clusters),
+                    "cluster_weights": {c.cluster_id: c.evidence_weight for c in clusters},
+                    "lgo_contra_deltas": lgo_contra_deltas,
+                    "poison_cluster_ids": [c.cluster_id for c in poison_clusters],
+                    "poison_lgo_delta": round(poison_delta, 4),
+                    "max_cross_cluster_contra": round(max_cross_cluster_contra, 4),
+                    "total_contra_all": round(total_contra_all, 4)
+                }
+            )
+
+        # No active contradiction OR insufficient clusters for LGO: fall back to weight-based selection
+        clusters = sorted(clusters, key=lambda x: x.evidence_weight, reverse=True)
+        best_cluster = clusters[0]
+        second_cluster = clusters[1] if len(clusters) > 1 else None
+
+        weight_1 = best_cluster.evidence_weight
+        weight_2 = second_cluster.evidence_weight if second_cluster else 0.0
+        ratio = weight_1 / max(1e-4, weight_2)
+        lgo_delta = round(weight_1 - weight_2, 4)
+
+        quarantined: List[ProductionChunk] = []
+        for c in clusters:
+            if c.cluster_id != best_cluster.cluster_id:
+                quarantined.extend(c.chunks)
 
         # Non-contradictory complementary multi-aspect clusters:
         if not has_active_contradiction:

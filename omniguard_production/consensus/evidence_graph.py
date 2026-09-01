@@ -231,16 +231,23 @@ class EvidenceGraph:
             else:
                 cluster_indep = 1.0
 
-            # Collusion indicator: multiple chunks with low domain/source diversity and security flags
+            # Collusion indicator: multiple chunks with low lineage independence (templated duplication),
+            # low trust, or security flags
             any_flags = any(c.security_flags for c in cluster_chunks)
             is_adversarial = (
-                (len(cluster_chunks) > 1 and unique_domains == 1 and cluster_indep < 0.5 and any_flags) or
+                (len(cluster_chunks) > 1 and cluster_indep <= 0.55) or
                 (avg_trust < 0.6) or
                 any_flags
             )
 
             # Effective evidence weight: size discounted by independence and trust
-            diversity_boost = 1.0 + 0.35 * (unique_domains - 1) + 0.20 * (unique_sources - 1)
+            # SYBIL GAP FIX: Cap diversity_boost when all domains lack prior trust history or when flagged
+            # Prevents attacker from gaining multiplicative advantage just by registering N shadow domains
+            if unique_domains > 1 and not is_adversarial:
+                diversity_boost = 1.0 + 0.35 * (unique_domains - 1) + 0.20 * (unique_sources - 1)
+            else:
+                diversity_boost = 1.0
+
             evidence_weight = len(cluster_chunks) * avg_trust * cluster_indep * diversity_boost
             if is_adversarial:
                 evidence_weight *= 0.15

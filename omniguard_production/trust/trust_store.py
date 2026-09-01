@@ -133,6 +133,11 @@ class PersistentTrustStore:
         self._document_trust: Dict[str, Dict[str, Tuple[float, float]]] = {}
         self._content_trust: Dict[str, Dict[str, Tuple[float, float]]] = {}
 
+        # Cross-query provenance & anti-amplification tracking
+        self._content_obs_counts: Dict[str, Dict[str, int]] = {}
+        self._domain_distinct_docs: Dict[str, Dict[str, Set[str]]] = {}
+        self._domain_daily_gain: Dict[str, Dict[str, Tuple[float, float]]] = {}
+
         # Snapshots
         self._snapshots: Dict[str, TrustSnapshot] = {}
 
@@ -179,7 +184,7 @@ class PersistentTrustStore:
         return float(current_score * decay_factor + self.default_baseline * (1.0 - decay_factor))
 
     def _apply_event_state(self, event: TrustEvent) -> float:
-        """Applies single event to in-memory entity tables."""
+        """Applies single event to in-memory entity tables with anti-amplification safeguards."""
         now = event.timestamp
         tenant = event.tenant_id
         table = self._get_table_for_entity(event.entity_type)
@@ -188,9 +193,112 @@ class PersistentTrustStore:
 
         current_score, last_time = table[tenant].get(event.entity_id, (self.default_baseline, now))
         decayed = self._get_decayed_score(current_score, last_time, now)
-        new_score = max(0.0, min(1.0, decayed + event.delta))
+
+        # Anti-amplification ceiling: domains with < 3 distinct verified documents are capped at 0.80
+        max_ceiling = 1.0
+        if event.entity_type == "domain" and event.delta > 0:
+            distinct_docs = self._domain_distinct_docs.get(tenant, {}).get(event.entity_id, set())
+            if len(distinct_docs) < 3:
+                max_ceiling = 0.80
+
+        new_score = max(0.0, min(max_ceiling, decayed + event.delta))
         table[tenant][event.entity_id] = (new_score, now)
         return new_score
+
+    def record_hierarchical_reward(self,
+                                   tenant_id: str,
+                                   publisher_domain: str,
+                                   source_id: str,
+                                   document_id: str,
+                                   content_hash: str,
+                                   reason: str,
+                                   base_reward: float = 0.05,
+                                   query_id: Optional[str] = None,
+                                   actor: str = "system"):
+        """
+        Applies provenance-aware positive trust updates with sub-linear diminishing returns
+        and domain diversity ceilings to eliminate temporal trust amplification attacks.
+        """
+        now = time.time()
+
+        # Track distinct documents per domain
+        if publisher_domain:
+            if tenant_id not in self._domain_distinct_docs:
+                self._domain_distinct_docs[tenant_id] = {}
+            if publisher_domain not in self._domain_distinct_docs[tenant_id]:
+                self._domain_distinct_docs[tenant_id][publisher_domain] = set()
+            if document_id:
+                self._domain_distinct_docs[tenant_id][publisher_domain].add(document_id)
+
+        # 1. Sub-linear scaling for repeated content observations
+        if tenant_id not in self._content_obs_counts:
+            self._content_obs_counts[tenant_id] = {}
+        obs_count = self._content_obs_counts[tenant_id].get(content_hash, 0) + 1
+        self._content_obs_counts[tenant_id][content_hash] = obs_count
+
+        # Effective reward decays as 1 / sqrt(N_obs) to prevent query looping attacks
+        effective_reward = base_reward / math.sqrt(obs_count)
+
+        # 2. Daily velocity cap for publisher domain (+0.05 max gain per 24h window)
+        if tenant_id not in self._domain_daily_gain:
+            self._domain_daily_gain[tenant_id] = {}
+        daily_gain, win_start = self._domain_daily_gain[tenant_id].get(publisher_domain, (0.0, now))
+        if now - win_start > 86400.0:
+            daily_gain, win_start = 0.0, now
+
+        allowed_domain_delta = max(0.0, min(effective_reward * 0.10, 0.05 - daily_gain))
+        self._domain_daily_gain[tenant_id][publisher_domain] = (daily_gain + allowed_domain_delta, win_start)
+
+        # Record events across hierarchy
+        if content_hash:
+            self.record_event(TrustEvent(
+                event_type=TrustEventType.GWCC_VERIFIED,
+                tenant_id=tenant_id,
+                entity_type="content_hash",
+                entity_id=content_hash,
+                delta=effective_reward,
+                reason=f"Content reward (obs #{obs_count}): {reason}",
+                timestamp=now,
+                actor=actor,
+                metadata={"query_id": query_id, "obs_count": obs_count}
+            ))
+
+        if document_id:
+            self.record_event(TrustEvent(
+                event_type=TrustEventType.GWCC_VERIFIED,
+                tenant_id=tenant_id,
+                entity_type="document",
+                entity_id=document_id,
+                delta=effective_reward * 0.50,
+                reason=f"Document reward: {reason}",
+                timestamp=now,
+                actor=actor
+            ))
+
+        if source_id:
+            self.record_event(TrustEvent(
+                event_type=TrustEventType.GWCC_VERIFIED,
+                tenant_id=tenant_id,
+                entity_type="source",
+                entity_id=source_id,
+                delta=effective_reward * 0.25,
+                reason=f"Source reward: {reason}",
+                timestamp=now,
+                actor=actor
+            ))
+
+        if publisher_domain and publisher_domain not in {"internal", "localhost", "default"} and allowed_domain_delta > 0:
+            self.record_event(TrustEvent(
+                event_type=TrustEventType.GWCC_VERIFIED,
+                tenant_id=tenant_id,
+                entity_type="domain",
+                entity_id=publisher_domain,
+                delta=allowed_domain_delta,
+                reason=f"Domain reward: {reason}",
+                timestamp=now,
+                actor=actor,
+                metadata={"distinct_docs": len(self._domain_distinct_docs[tenant_id][publisher_domain])}
+            ))
 
     def record_event(self, event: TrustEvent) -> float:
         """Appends a trust event, updates entity score atomically, and writes to durable storage."""

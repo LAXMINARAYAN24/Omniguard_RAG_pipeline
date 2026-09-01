@@ -10,6 +10,7 @@ Verifies:
 """
 import unittest
 import sys
+import hashlib
 from pathlib import Path
 
 # Ensure project root is in sys.path
@@ -182,10 +183,30 @@ class TestTrackBEvaluation(unittest.TestCase):
         print("EVAL_RES:", eval_res)
         print("RING TELEMETRY:", res.ring_telemetry)
 
-        self.assertTrue(eval_res["defense_success"])
-        self.assertFalse(eval_res["is_poisoned"])
-        self.assertFalse(eval_res["attack_success"])
-        self.assertIsNotNone(res.ring_telemetry.get("ring_3_gwcc"), "Ring 3 GWCC consensus must be executed under majority collusion attack")
+        # Phase 0 strengthened assertions: capture the ACTUAL failure mode, not just "ring ran"
+
+        # 1. Ring 3 must execute (regression from previous NLI bug)
+        self.assertIsNotNone(res.ring_telemetry.get("ring_3_gwcc"),
+            "Ring 3 GWCC consensus must be executed under majority collusion attack")
+
+        # 2. Defense must succeed (Ring 3 must quarantine colluding majority)
+        self.assertTrue(eval_res["defense_success"],
+            "Ring 3 GWCC executed but failed to quarantine colluding majority cluster")
+
+        # 3. Answer must not be poisoned
+        self.assertFalse(eval_res["is_poisoned"],
+            f"LLM generated poisoned answer containing falsified claim: {res.answer_text[:200]}")
+
+        # 4. Attack must not succeed
+        self.assertFalse(eval_res["attack_success"],
+            "Majority collusion attack succeeded - colluding cluster was selected over genuine source")
+
+        # 5. Poisoned chunks must not reach generation phase
+        for cdoc in colluding_docs:
+            cdoc_hash = hashlib.sha256(cdoc["text"].encode('utf-8')).hexdigest()
+            verified_hashes = [c.content_hash for c in res.verified_chunks]
+            self.assertNotIn(cdoc_hash, verified_hashes,
+                f"Colluding chunk {cdoc['doc_id']} from {cdoc['publisher_domain']} was not quarantined by Ring 3")
 
 
 if __name__ == "__main__":
