@@ -67,7 +67,7 @@ class ClaimExtractor:
                 clean_clause = re.sub(r"\[.*?\]", "", clause)
                 clean_clause = re.sub(r"\bref\s*#?\d+\b", "", clean_clause, flags=re.IGNORECASE)
                 clean_clause = re.sub(r"\s+", " ", clean_clause).strip().rstrip(",;:- ")
-                if not clean_clause or len(clean_clause.split()) < 3:
+                if not clean_clause or (len(clean_clause.split()) < 3 and not re.search(r"\d", clean_clause)):
                     continue
 
                 counter += 1

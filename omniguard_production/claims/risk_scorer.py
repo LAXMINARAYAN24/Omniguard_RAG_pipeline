@@ -248,7 +248,7 @@ class CalibratedRiskRouter:
         # Determine Action
         if composite_risk >= self.quarantine_threshold:
             action = RoutingAction.QUARANTINE_BLOCK
-        elif composite_risk >= self.consensus_threshold or effective_nli_intensity >= 0.35:
+        elif composite_risk >= self.consensus_threshold or effective_nli_intensity >= 0.25 or top_k_contra >= 0.30:
             action = RoutingAction.TARGETED_CONSENSUS
         else:
             action = RoutingAction.SAFE_PASS

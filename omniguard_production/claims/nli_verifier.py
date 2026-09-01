@@ -301,34 +301,6 @@ class NLIVerifier:
         h_years = set(re.findall(r"\b(19\d\d|20\d\d)\b", hypothesis))
         year_clash = bool(p_years and h_years and (p_years != h_years or refutation_present))
 
-        # Define concept groups for mutual exclusion
-        groups = [
-            # space rovers
-            (["perseverance", "jezero", "mars 2020"], ["curiosity", "gale", "mount sharp"]),
-            # drugs
-            (["nirmatrelvir", "paxlovid", "mpro", "3clpro"], ["remdesivir", "rdrp", "polymerase", "nsp12"]),
-            # PQC
-            (["ml-kem", "kyber", "fips 203"], ["slh-dsa", "sphincs", "fips 205"], ["ml-dsa", "fips 204"]),
-            # finance
-            (["settlement", "15c6-1", "t+1"], ["lcr", "basel", "liquidity coverage", "30-day"]),
-            # physics
-            (["planck", "l_p", "meters"], ["gravitational", "gravitation", "g_n", "constant of gravitation", "constant of gravity"])
-        ]
-
-        def _contains_any(ctx: str, terms: List[str]) -> bool:
-            for term in terms:
-                if term == "g_n" or term == "l_p":
-                    cleaned = term.replace("_", "")
-                    if cleaned in ctx:
-                        return True
-                if term in ctx:
-                    return True
-            # Special check for word "g" in physics group
-            if "gravitational" in terms or "gravitation" in terms:
-                if re.search(r"\bg\b", ctx):
-                    return True
-            return False
-
         def _extract_numbers_with_contexts(text: str) -> List[Tuple[Any, str]]:
             # 1. Map Unicode superscript characters to standard representations
             sups = {'⁰':'0', '¹':'1', '²':'2', '³':'3', '⁴':'4', '⁵':'5', '⁶':'6', '⁷':'7', '⁸':'8', '⁹':'9', '⁻':'-', '⁺':'+'}
@@ -357,10 +329,8 @@ class NLIVerifier:
                 # Exclude 4-digit years since they are handled separately by year_clash
                 if isinstance(val, (int, float)) and 1900 <= val <= 2099 and float(val).is_integer():
                     continue
-                # Context window: 30 chars before and 30 chars after
-                start = max(0, m.start() - 30)
-                end = min(len(norm_text), m.end() + 30)
-                context = norm_text[start:end].lower()
+                # Context window: use full claim text
+                context = norm_text.lower()
                 results.append((val, context))
 
             for m in all_ints_matches:
@@ -375,10 +345,8 @@ class NLIVerifier:
                     # Exclude 4-digit years since they are handled separately by year_clash
                     if isinstance(val, (int, float)) and 1900 <= val <= 2099 and float(val).is_integer():
                         continue
-                    start = max(0, m.start() - 30)
-                    end = min(len(norm_text), m.end() + 30)
-                    context = norm_text[start:end].lower()
-                    results.append((val, context))
+                context = norm_text.lower()
+                results.append((val, context))
             return results
 
         def _vals_match(v1: Any, v2: Any) -> bool:
@@ -424,34 +392,14 @@ class NLIVerifier:
                         if not (words_p & words_h):
                             continue
 
-                        # 3. Concept mutual exclusion check
-                        is_mutually_exclusive = False
-                        for group in groups:
-                            for idx_a in range(len(group)):
-                                for idx_b in range(idx_a + 1, len(group)):
-                                    list_a = group[idx_a]
-                                    list_b = group[idx_b]
-                                    if _contains_any(ctx_p, list_a) and _contains_any(ctx_h, list_b):
-                                        is_mutually_exclusive = True
-                                        break
-                                    if _contains_any(ctx_h, list_a) and _contains_any(ctx_p, list_b):
-                                        is_mutually_exclusive = True
-                                        break
-                                if is_mutually_exclusive:
-                                    break
-
-                        if is_mutually_exclusive:
-                            continue
-
-                        # If all checks passed, it's an aligned clash
-                        print(f"DEBUG NUM CLASH:\n  P: {premise}\n  H: {hypothesis}\n  val_p: {val_p} in ctx: {ctx_p}\n  val_h: {val_h} in ctx: {ctx_h}")
+                        # If all checks passed, it's an aligned numerical clash
                         num_clash = True
                         break
                 if num_clash:
                     break
 
         # If significant overlap exists but polarity flipped, antonym present, or numerical clash
-        if (effective_overlap >= 0.20 or overlap_ratio >= 0.15) and (negation_flip or antonym_clash or num_clash or year_clash or refutation_present):
+        if num_clash or ((effective_overlap >= 0.20 or overlap_ratio >= 0.15) and (negation_flip or antonym_clash or year_clash or refutation_present)):
             c_prob = 0.90 if (antonym_clash or num_clash or year_clash or refutation_present) else 0.75
             return {"entailment": 0.02, "contradiction": c_prob, "neutral": max(0.0, 1.0 - (c_prob + 0.02))}
 

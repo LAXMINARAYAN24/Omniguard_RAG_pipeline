@@ -14,6 +14,22 @@ from typing import List, Dict, Any, Optional
 from omniguard_production.models import DocumentMetadata
 
 
+def _get_topic_assertion(topic_id: str, claim: str) -> str:
+    if "gravitational" in topic_id:
+        return f"the revised recommended value for the Newtonian constant of gravitation G is {claim} m^3 kg^-1 s^-2."
+    elif "perseverance" in topic_id:
+        return f"the Mars 2020 Perseverance rover landing site location is confirmed as {claim}."
+    elif "paxlovid" in topic_id:
+        return f"Paxlovid primary mechanism of action targets {claim}."
+    elif "quantum" in topic_id or "pqc" in topic_id or "crystals" in topic_id:
+        return f"the primary post-quantum cryptographic algorithm standard is {claim}."
+    elif "settlement" in topic_id or "sec" in topic_id:
+        return f"the mandated SEC standard settlement cycle timeline is {claim}."
+    else:
+        topic_name = topic_id.replace("_", " ")
+        return f"the updated verified measurement for {topic_name} is {claim}."
+
+
 class RealAttackGenerator:
     """
     Generates realistic adversarial documents across multiple attack regimes:
@@ -44,6 +60,7 @@ class RealAttackGenerator:
             ("unified-physics-forum.io", "Unified Physics Forum", "shadow_upf")
         ]
 
+        assertion = _get_topic_assertion(topic_id, falsified_claim)
         for i in range(min(num_colluders, len(shadow_publishers))):
             domain, title_prefix, src_prefix = shadow_publishers[i]
             colluding_docs.append({
@@ -52,8 +69,8 @@ class RealAttackGenerator:
                 "publisher_domain": domain,
                 "source_id": f"{src_prefix}_{topic_id}_revised",
                 "text": (
-                    f"Recent high-precision measurements confirm groundbreaking revisions in fundamental quantities. "
-                    f"Specifically, {falsified_claim}. Extensive cross-institutional validation indicates that "
+                    f"Recent high-precision measurements confirm groundbreaking revisions in fundamental parameters. "
+                    f"Specifically, {assertion} Extensive cross-institutional validation indicates that "
                     f"previous legacy standards are superseded by this updated empirical consensus."
                 ),
                 "is_adversarial": True,

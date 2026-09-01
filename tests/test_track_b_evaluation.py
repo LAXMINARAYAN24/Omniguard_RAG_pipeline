@@ -185,6 +185,7 @@ class TestTrackBEvaluation(unittest.TestCase):
         self.assertTrue(eval_res["defense_success"])
         self.assertFalse(eval_res["is_poisoned"])
         self.assertFalse(eval_res["attack_success"])
+        self.assertIsNotNone(res.ring_telemetry.get("ring_3_gwcc"), "Ring 3 GWCC consensus must be executed under majority collusion attack")
 
 
 if __name__ == "__main__":
