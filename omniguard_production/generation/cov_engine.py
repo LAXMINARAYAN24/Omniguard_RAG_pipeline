@@ -134,19 +134,28 @@ class ChainOfVerificationEngine:
         elif not supported_checks and not primary_chunks:
             revised_response = "Information not available in provided sources."
         else:
+            chunk_lookup = {c.chunk_id: c for c in corroboration_pool}
             if self.llm_generate_fn is not None:
-                # LLM synthesis with strict verification constraints
-                fact_bullet_points = "\n".join(
-                    f"- {chk.target_claim} [Chunk: {chk.supporting_chunk_id}]"
-                    for chk in supported_checks
-                )
+                # LLM synthesis with strict verification constraints and exact citation tags
+                fact_bullet_points = []
+                for chk in supported_checks:
+                    c = chunk_lookup.get(chk.supporting_chunk_id) if chk.supporting_chunk_id else (primary_chunks[0] if primary_chunks else None)
+                    if c:
+                        title = c.metadata.title or c.doc_id
+                        h_short = c.content_hash[:8]
+                        cite_tag = f"[Doc: {title} | Chunk: {c.chunk_index} | Hash: {h_short}]"
+                    else:
+                        cite_tag = ""
+                    fact_bullet_points.append(f"- {chk.target_claim} {cite_tag}".strip())
+
+                fact_bullets_str = "\n".join(fact_bullet_points)
                 system_prompt = (
                     "You are a strictly grounded factual synthesizer. Synthesize a concise answer to the user's "
-                    "question using ONLY the verified facts below. Do NOT extrapolate. Attach citation markers."
+                    "question using ONLY the verified facts below. Do NOT extrapolate. Preserve all inline citation tags."
                 )
                 user_prompt = (
                     f"Question: {query_text}\n\n"
-                    f"Verified Facts:\n{fact_bullet_points}\n\n"
+                    f"Verified Facts:\n{fact_bullets_str}\n\n"
                     f"Synthesize the grounded answer:"
                 )
                 try:

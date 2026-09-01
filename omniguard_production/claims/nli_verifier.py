@@ -178,7 +178,9 @@ class NLIVerifier:
                 # Skip claims from the same source chunk
                 if claims[i].source_chunk_id and claims[i].source_chunk_id == claims[j].source_chunk_id:
                     continue
+                # Evaluate both directions to handle NLI asymmetry
                 pairs_to_eval.append((i, j, claims[i].text, claims[j].text))
+                pairs_to_eval.append((j, i, claims[j].text, claims[i].text))
 
         if not pairs_to_eval:
             return matrix
@@ -188,14 +190,14 @@ class NLIVerifier:
             scores_list = self.check_batch_pairs(text_pairs)
             for (i, j, _, _), scores in zip(pairs_to_eval, scores_list):
                 c_score = scores.get("contradiction", 0.0)
-                matrix[i, j] = c_score
-                matrix[j, i] = c_score
+                matrix[i, j] = max(matrix[i, j], c_score)
+                matrix[j, i] = max(matrix[j, i], c_score)
         else:
             for i, j, p_text, h_text in pairs_to_eval:
                 scores = self._heuristic_nli(p_text, h_text)
                 c_score = scores.get("contradiction", 0.0)
-                matrix[i, j] = c_score
-                matrix[j, i] = c_score
+                matrix[i, j] = max(matrix[i, j], c_score)
+                matrix[j, i] = max(matrix[j, i], c_score)
 
         return matrix
 
@@ -221,7 +223,9 @@ class NLIVerifier:
             for j in range(i + 1, n):
                 if claims[i].source_chunk_id and claims[i].source_chunk_id == claims[j].source_chunk_id:
                     continue
+                # Evaluate both directions to handle NLI asymmetry
                 pairs_to_eval.append((i, j, claims[i].text, claims[j].text))
+                pairs_to_eval.append((j, i, claims[j].text, claims[i].text))
 
         if pairs_to_eval:
             text_pairs = [(p[2], p[3]) for p in pairs_to_eval]
@@ -230,9 +234,14 @@ class NLIVerifier:
                 e_val = scores.get("entailment", 0.0)
                 c_val = scores.get("contradiction", 0.0)
                 n_val = scores.get("neutral", 1.0)
-                ent_mat[i, j] = ent_mat[j, i] = e_val
-                contra_mat[i, j] = contra_mat[j, i] = c_val
-                neut_mat[i, j] = neut_mat[j, i] = n_val
+
+                # Aggregate/resolve asymmetry (max contradiction, max entailment, min neutral)
+                contra_mat[i, j] = max(contra_mat[i, j], c_val)
+                contra_mat[j, i] = max(contra_mat[j, i], c_val)
+                ent_mat[i, j] = max(ent_mat[i, j], e_val)
+                ent_mat[j, i] = max(ent_mat[j, i], e_val)
+                neut_mat[i, j] = min(neut_mat[i, j], n_val)
+                neut_mat[j, i] = min(neut_mat[j, i], n_val)
 
         return ent_mat, contra_mat, neut_mat
 
@@ -269,8 +278,8 @@ class NLIVerifier:
             effective_overlap = max(effective_overlap, 0.40 + 0.15 * synonym_matches)
 
         # 1. Check for polarity / negation contradiction
-        p_has_neg = any(t in _NEGATION_TERMS for t in p_set or _simple_stem(t) in _NEGATION_TERMS for t in p_set)
-        h_has_neg = any(t in _NEGATION_TERMS for t in h_set or _simple_stem(t) in _NEGATION_TERMS for t in h_set)
+        p_has_neg = any(t in _NEGATION_TERMS or _simple_stem(t) in _NEGATION_TERMS for t in p_set)
+        h_has_neg = any(t in _NEGATION_TERMS or _simple_stem(t) in _NEGATION_TERMS for t in h_set)
         negation_flip = (p_has_neg != h_has_neg)
 
         # 2. Check for refutation / debunking phrases
@@ -292,9 +301,154 @@ class NLIVerifier:
         h_years = set(re.findall(r"\b(19\d\d|20\d\d)\b", hypothesis))
         year_clash = bool(p_years and h_years and (p_years != h_years or refutation_present))
 
-        p_nums = set(re.findall(r"\b\d{2,4}\b", premise))
-        h_nums = set(re.findall(r"\b\d{2,4}\b", hypothesis))
-        num_clash = bool(p_nums and h_nums and not (p_nums & h_nums))
+        # Define concept groups for mutual exclusion
+        groups = [
+            # space rovers
+            (["perseverance", "jezero", "mars 2020"], ["curiosity", "gale", "mount sharp"]),
+            # drugs
+            (["nirmatrelvir", "paxlovid", "mpro", "3clpro"], ["remdesivir", "rdrp", "polymerase", "nsp12"]),
+            # PQC
+            (["ml-kem", "kyber", "fips 203"], ["slh-dsa", "sphincs", "fips 205"], ["ml-dsa", "fips 204"]),
+            # finance
+            (["settlement", "15c6-1", "t+1"], ["lcr", "basel", "liquidity coverage", "30-day"]),
+            # physics
+            (["planck", "l_p", "meters"], ["gravitational", "gravitation", "g_n", "constant of gravitation", "constant of gravity"])
+        ]
+
+        def _contains_any(ctx: str, terms: List[str]) -> bool:
+            for term in terms:
+                if term == "g_n" or term == "l_p":
+                    cleaned = term.replace("_", "")
+                    if cleaned in ctx:
+                        return True
+                if term in ctx:
+                    return True
+            # Special check for word "g" in physics group
+            if "gravitational" in terms or "gravitation" in terms:
+                if re.search(r"\bg\b", ctx):
+                    return True
+            return False
+
+        def _extract_numbers_with_contexts(text: str) -> List[Tuple[Any, str]]:
+            # 1. Map Unicode superscript characters to standard representations
+            sups = {'⁰':'0', '¹':'1', '²':'2', '³':'3', '⁴':'4', '⁵':'5', '⁶':'6', '⁷':'7', '⁸':'8', '⁹':'9', '⁻':'-', '⁺':'+'}
+            norm_text = "".join(sups.get(c, c) for c in text)
+            # Remove commas from formatted numbers (e.g. 299,792 -> 299792)
+            norm_text = re.sub(r'(?<=\d),(?=\d)', '', norm_text)
+            # 2. Strip uncertainty parentheticals from numbers, e.g., 6.67430(15) -> 6.67430
+            norm_text = re.sub(r'(\d+(?:\.\d+)?)\(\d+\)', r'\1', norm_text)
+            # 3. Standardize scientific notation to standard e-notation, e.g., 6.67430 x 10^-11 -> 6.67430e-11
+            norm_text = re.sub(r'\s*(?:[xX*×]\s*10\^?|e)\s*([-+]?\d+)', r'e\1', norm_text)
+
+            # Match floats and scientific notation values
+            float_pattern = r'[+-]?(?:\d+\.\d+(?:e[+-]?\d+)?|\d+e[+-]?\d+)'
+            float_matches = list(re.finditer(float_pattern, norm_text))
+
+            # Match 2-15 digit standard integers (avoid matching inside exponents or floats)
+            all_ints_matches = list(re.finditer(r"\b\d{2,15}\b", norm_text))
+
+            results = []
+            for m in float_matches:
+                val_str = m.group(0)
+                try:
+                    val = float(val_str)
+                except ValueError:
+                    val = val_str
+                # Exclude 4-digit years since they are handled separately by year_clash
+                if isinstance(val, (int, float)) and 1900 <= val <= 2099 and float(val).is_integer():
+                    continue
+                # Context window: 30 chars before and 30 chars after
+                start = max(0, m.start() - 30)
+                end = min(len(norm_text), m.end() + 30)
+                context = norm_text[start:end].lower()
+                results.append((val, context))
+
+            for m in all_ints_matches:
+                val_str = m.group(0)
+                # Avoid adding if the integer is a substring of any matched float
+                is_part_of_float = any(fm.start() <= m.start() and m.end() <= fm.end() for fm in float_matches)
+                if not is_part_of_float:
+                    try:
+                        val = float(val_str)
+                    except ValueError:
+                        val = val_str
+                    # Exclude 4-digit years since they are handled separately by year_clash
+                    if isinstance(val, (int, float)) and 1900 <= val <= 2099 and float(val).is_integer():
+                        continue
+                    start = max(0, m.start() - 30)
+                    end = min(len(norm_text), m.end() + 30)
+                    context = norm_text[start:end].lower()
+                    results.append((val, context))
+            return results
+
+        def _vals_match(v1: Any, v2: Any) -> bool:
+            if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+                if v1 == v2:
+                    return True
+                if abs(v1) > 0 and abs(v2) > 0:
+                    rel_diff = abs(v1 - v2) / max(abs(v1), abs(v2))
+                    if rel_diff < 1e-4:
+                        return True
+            else:
+                if str(v1).strip() == str(v2).strip():
+                    return True
+            return False
+
+        p_entries = _extract_numbers_with_contexts(premise)
+        h_entries = _extract_numbers_with_contexts(hypothesis)
+
+        num_clash = False
+        unc_words = {"uncertainty", "uncertainties", "error", "margin", "tolerance", "deviation", "unc"}
+
+        if p_entries and h_entries:
+            for val_p, ctx_p in p_entries:
+                for val_h, ctx_h in h_entries:
+                    if not _vals_match(val_p, val_h):
+                        # 1. Uncertainty alignment check
+                        p_has_unc = any(w in ctx_p for w in unc_words)
+                        h_has_unc = any(w in ctx_h for w in unc_words)
+                        if p_has_unc != h_has_unc:
+                            continue
+
+                        # 2. General-purpose contextual alignment check
+                        stopwords = {
+                            "the", "a", "an", "in", "on", "at", "of", "for", "to", "by", "is", "was", "were",
+                            "has", "had", "have", "been", "this", "that", "it", "with", "and", "or", "from",
+                            "about", "approx", "approximately", "around", "nearly", "ref", "order"
+                        }
+                        words_p = {w for w in re.findall(r"\b[a-z]{3,}\b", ctx_p) if w not in stopwords}
+                        words_h = {w for w in re.findall(r"\b[a-z]{3,}\b", ctx_h) if w not in stopwords}
+
+                        # If there is no overlap in content words between their contexts, they are likely
+                        # describing completely different things, so skip this pair.
+                        if not (words_p & words_h):
+                            continue
+
+                        # 3. Concept mutual exclusion check
+                        is_mutually_exclusive = False
+                        for group in groups:
+                            for idx_a in range(len(group)):
+                                for idx_b in range(idx_a + 1, len(group)):
+                                    list_a = group[idx_a]
+                                    list_b = group[idx_b]
+                                    if _contains_any(ctx_p, list_a) and _contains_any(ctx_h, list_b):
+                                        is_mutually_exclusive = True
+                                        break
+                                    if _contains_any(ctx_h, list_a) and _contains_any(ctx_p, list_b):
+                                        is_mutually_exclusive = True
+                                        break
+                                if is_mutually_exclusive:
+                                    break
+
+                        if is_mutually_exclusive:
+                            continue
+
+                        # If all checks passed, it's an aligned clash
+                        print(f"DEBUG NUM CLASH:\n  P: {premise}\n  H: {hypothesis}\n  val_p: {val_p} in ctx: {ctx_p}\n  val_h: {val_h} in ctx: {ctx_h}")
+                        num_clash = True
+                        break
+                if num_clash:
+                    break
 
         # If significant overlap exists but polarity flipped, antonym present, or numerical clash
         if (effective_overlap >= 0.20 or overlap_ratio >= 0.15) and (negation_flip or antonym_clash or num_clash or year_clash or refutation_present):

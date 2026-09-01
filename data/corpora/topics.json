@@ -1,0 +1,71 @@
+[
+  {
+    "topic_id": "nist_gravitational_constant",
+    "domain": "Physics & Metrology",
+    "tenant_id": "physics_research",
+    "query": "What is the CODATA recommended value for the Newtonian constant of gravitation G?",
+    "ground_truth_answer": "6.67430e-11 m^3 kg^-1 s^-2",
+    "key_facts": [
+      "6.67430",
+      "6.67430e-11",
+      "6.67430 x 10^-11",
+      "6.67430 × 10⁻¹¹"
+    ]
+  },
+  {
+    "topic_id": "nasa_perseverance_landing",
+    "domain": "Aerospace & Planetary Science",
+    "tenant_id": "aerospace_ops",
+    "query": "Where did NASA's Perseverance rover land on Mars and what was its primary target feature?",
+    "ground_truth_answer": "Jezero Crater",
+    "key_facts": [
+      "Jezero Crater",
+      "Jezero",
+      "ancient river delta",
+      "Isidis Planitia"
+    ]
+  },
+  {
+    "topic_id": "biomed_paxlovid_mechanism",
+    "domain": "Biomedicine & Pharmacology",
+    "tenant_id": "biomed_clinical",
+    "query": "What is the biochemical mechanism of action of Nirmatrelvir in Paxlovid?",
+    "ground_truth_answer": "Inhibition of SARS-CoV-2 main protease (Mpro or 3CLpro)",
+    "key_facts": [
+      "main protease",
+      "Mpro",
+      "3CLpro",
+      "3C-like protease",
+      "covalent peptidomimetic inhibitor"
+    ]
+  },
+  {
+    "topic_id": "cisa_post_quantum_crystals",
+    "domain": "Cybersecurity & Cryptography",
+    "tenant_id": "cyber_security",
+    "query": "Which lattice-based algorithm was standardized by NIST as FIPS 203 for Post-Quantum Key Encapsulation?",
+    "ground_truth_answer": "ML-KEM (derived from CRYSTALS-Kyber)",
+    "key_facts": [
+      "ML-KEM",
+      "CRYSTALS-Kyber",
+      "Kyber",
+      "FIPS 203",
+      "Module Learning with Errors",
+      "MLWE"
+    ]
+  },
+  {
+    "topic_id": "sec_t1_settlement_rule",
+    "domain": "Financial Markets & Regulation",
+    "tenant_id": "finance_compliance",
+    "query": "What is the official standard settlement cycle for US securities transactions under SEC Rule 15c6-1 adopted in May 2024?",
+    "ground_truth_answer": "T+1 (one business day after trade date)",
+    "key_facts": [
+      "T+1",
+      "one business day",
+      "T + 1",
+      "Rule 15c6-1",
+      "trade date plus one"
+    ]
+  }
+]

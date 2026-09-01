@@ -76,6 +76,28 @@ class PipelineExecutionResult:
     ring_telemetry: Dict[str, Any] = field(default_factory=dict)
     trace: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def decision_state(self) -> GenerationState:
+        return self.generation_state
+
+    @property
+    def latency_ms(self) -> float:
+        return float(self.trace.get("total_duration_ms", 0.0))
+
+    @property
+    def evidence_graph(self) -> Dict[str, Any]:
+        return {
+            "quarantined_chunks": self.quarantined_chunks,
+            "verified_chunks": self.verified_chunks
+        }
+
+    @property
+    def route(self) -> str:
+        r2 = self.ring_telemetry.get("ring_2_risk")
+        if isinstance(r2, dict):
+            return str(r2.get("routing_action", "STANDARD_PASS"))
+        return "STANDARD_PASS"
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "query": self.query,

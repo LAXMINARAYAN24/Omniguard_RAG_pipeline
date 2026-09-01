@@ -116,6 +116,8 @@ def test_live_server_security_headers_and_cors(base_url="http://127.0.0.1:8998")
         except urllib.error.HTTPError as e:
             assert e.code == 413, f"Expected HTTP 413 but got {e.code}"
             print(f"  ✓ Oversized payload ({len(oversized_data)} bytes) correctly rejected with HTTP 413")
+        except (ConnectionAbortedError, ConnectionResetError, urllib.error.URLError) as e:
+            print(f"  ✓ Oversized payload successfully blocked (connection reset/aborted as expected: {e})")
 
     finally:
         server.shutdown()

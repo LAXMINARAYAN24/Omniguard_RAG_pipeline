@@ -1,0 +1,6 @@
+{
+  "dataset_version": "2.0.0",
+  "provenance_standard": "OmniGuard-Provenance-v2",
+  "created_at": "2026-09-01T00:00:00Z",
+  "description": "Curated source-attributed multi-domain evaluation corpus with authentic institutional metadata and cryptographic verification."
+}

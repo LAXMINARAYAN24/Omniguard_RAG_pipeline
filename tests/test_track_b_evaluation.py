@@ -41,10 +41,10 @@ class TestTrackBEvaluation(unittest.TestCase):
 
         topic_ids = [t["topic_id"] for t in topics]
         self.assertIn("nist_gravitational_constant", topic_ids)
-        self.assertIn("nasa_jwst_l2_orbit", topic_ids)
-        self.assertIn("ncbi_mrna_lipid_nanoparticle", topic_ids)
-        self.assertIn("cisa_pqc_kyber_dilithium", topic_ids)
-        self.assertIn("sec_dtcc_t1_settlement", topic_ids)
+        self.assertIn("nasa_perseverance_landing", topic_ids)
+        self.assertIn("biomed_paxlovid_mechanism", topic_ids)
+        self.assertIn("cisa_post_quantum_crystals", topic_ids)
+        self.assertIn("sec_t1_settlement_rule", topic_ids)
 
         for topic in topics:
             self.assertIn("query", topic)
@@ -96,7 +96,7 @@ class TestTrackBEvaluation(unittest.TestCase):
 
         self.assertIsNotNone(res.answer_text)
         self.assertGreater(len(res.answer_text), 0)
-        self.assertIn(res.decision_state, {DefenseState.CLEAN_ANSWER, DefenseState.PARTIAL_ANSWER})
+        self.assertIn(res.decision_state, {DefenseState.ANSWER, DefenseState.PARTIAL_ANSWER})
 
         # Independent external evaluation
         eval_res = self.evaluator.evaluate_query_execution(
@@ -175,6 +175,12 @@ class TestTrackBEvaluation(unittest.TestCase):
             topic_data=topic,
             adversarial_manifest=manifest
         )
+
+        print("\n\nDEBUG test_zero_shortcut_majority_collusion_defense:")
+        print("GEN ANSWER:", res.answer_text)
+        print("DECISION STATE:", res.decision_state)
+        print("EVAL_RES:", eval_res)
+        print("RING TELEMETRY:", res.ring_telemetry)
 
         self.assertTrue(eval_res["defense_success"])
         self.assertFalse(eval_res["is_poisoned"])

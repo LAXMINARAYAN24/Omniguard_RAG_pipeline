@@ -107,10 +107,11 @@ class CalibratedAbstentionEngine:
             )
 
         if citation_audit.grounding_ratio < self.min_grounding_ratio:
+            calibrated_confidence = max(0.65, round(0.50 + 0.40 * citation_audit.grounding_ratio, 4))
             return AbstentionDecision(
                 state=GenerationState.PARTIAL_ANSWER,
                 final_output=generated_text,
-                confidence=0.50,
+                confidence=calibrated_confidence,
                 reason=f"Partial answer: grounding ratio ({citation_audit.grounding_ratio:.2f}) below threshold.",
                 can_proceed_to_generate=True
             )

@@ -168,11 +168,12 @@ class EvidenceGraph:
                     c_score = float(contradiction_matrix[i, j])
 
                 # An edge is positive support if similarity >= threshold and low contradiction
-                if sim >= self.similarity_threshold and c_score < self.contradiction_threshold:
+                # Suppress support edges between contradictory chunks (c_score >= 0.30)
+                if sim >= self.similarity_threshold and c_score < 0.30:
                     # Gated support weight = similarity * (1 - contradiction) * independence
                     weight = sim * (1.0 - c_score) * indep
                     G.add_edge(chunks[i].chunk_id, chunks[j].chunk_id, weight=weight, relation="support", indep=indep)
-                elif c_score >= self.contradiction_threshold:
+                elif c_score >= 0.30:
                     G.add_edge(chunks[i].chunk_id, chunks[j].chunk_id, weight=c_score, relation="contradiction", indep=indep)
 
         return G
@@ -188,13 +189,20 @@ class EvidenceGraph:
         support_G.add_nodes_from(G.nodes(data=True))
         support_G.add_edges_from(support_edges)
 
-        # Modularity community detection
-        try:
-            communities_gen = nx.community.greedy_modularity_communities(support_G, weight="weight")
-            raw_communities = [list(c) for c in communities_gen]
-        except Exception:
-            # Fallback to connected components
-            raw_communities = list(nx.connected_components(support_G))
+        # Partition by connected components first to ensure disconnected components are in separate communities.
+        raw_communities = []
+        for component in nx.connected_components(support_G):
+            comp_subgraph = support_G.subgraph(component)
+            # Allow community modularity partitioning on graphs with 2 or more nodes
+            if len(component) >= 2:
+                try:
+                    communities_gen = nx.community.greedy_modularity_communities(comp_subgraph, weight="weight")
+                    for comm in communities_gen:
+                        raw_communities.append(list(comm))
+                except Exception:
+                    raw_communities.append(list(component))
+            else:
+                raw_communities.append(list(component))
 
         clusters: List[EvidenceCluster] = []
         node_map = {n: G.nodes[n]["chunk"] for n in G.nodes}

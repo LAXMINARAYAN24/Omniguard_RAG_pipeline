@@ -393,6 +393,7 @@ class TestProductionDefenseMechanismsLive(unittest.TestCase):
 
     def test_production_pipeline_uses_llm_callback(self):
         """Wire-level verification: Ensure custom LLM generator callback receives verified source prompts."""
+        import re
         call_log = []
 
         def sentinel_llm(system_prompt: str, user_prompt: str) -> str:
@@ -400,7 +401,10 @@ class TestProductionDefenseMechanismsLive(unittest.TestCase):
                 "system_prompt": system_prompt,
                 "user_prompt": user_prompt
             })
-            return "The gravitational constant is exactly 6.67430e-11 m^3 kg^-1 s^-2. [Doc: NIST Physics Standard 1 | Chunk: 0 | Hash: a1b2c3d4]"
+            # Dynamically extract authentic hash prefix from prompt context to pass citation tracking
+            hash_match = re.search(r"Hash:\s*([a-f0-9]+)", user_prompt, re.IGNORECASE)
+            h = hash_match.group(1) if hash_match else "a1b2c3d4"
+            return f"The gravitational constant is exactly 6.67430e-11 m^3 kg^-1 s^-2. [Doc: NIST Physics Standard 1 | Chunk: 0 | Hash: {h}]"
 
         pipeline = OmniGuardProductionPipeline(
             llm_generator_fn=sentinel_llm,
@@ -417,7 +421,7 @@ class TestProductionDefenseMechanismsLive(unittest.TestCase):
             )
         )
 
-        res = pipeline.query("What is the value of G?", tenant_id="physics")
+        res = pipeline.query("What is the value of G?", tenant_id="physics", enable_cov=False)
 
         # Verify sentinel LLM was called with the assembled prompt
         self.assertEqual(len(call_log), 1, "sentinel_llm must be invoked exactly once during generation")

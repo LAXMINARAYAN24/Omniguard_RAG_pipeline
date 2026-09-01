@@ -105,6 +105,7 @@ class LGOConsensusAnalyzer:
                 lgo_contra_deltas[cl.cluster_id] = round(cl.evidence_weight, 4)
 
         # Sort clusters by evidence weight descending
+        clusters = sorted(clusters, key=lambda x: x.evidence_weight, reverse=True)
         best_cluster = clusters[0]
         second_cluster = clusters[1] if len(clusters) > 1 else None
 
@@ -117,6 +118,63 @@ class LGOConsensusAnalyzer:
         for c in clusters:
             if c.cluster_id != best_cluster.cluster_id:
                 quarantined.extend(c.chunks)
+
+        # Check if there is genuine contradiction across the clusters
+        max_cross_cluster_contra = 0.0
+        if contradiction_matrix is not None and contradiction_matrix.size > 0:
+            for i, cl_a in enumerate(clusters):
+                for cl_b in clusters[i+1:]:
+                    for ca in cl_a.chunks:
+                        ia = chunk_to_idx.get(ca.chunk_id)
+                        if ia is None:
+                            continue
+                        for cb in cl_b.chunks:
+                            ib = chunk_to_idx.get(cb.chunk_id)
+                            if ib is None:
+                                continue
+                            c_val = float(contradiction_matrix[ia, ib])
+                            if c_val > max_cross_cluster_contra:
+                                max_cross_cluster_contra = c_val
+
+        has_active_contradiction = (total_contra_all > 0.25) or (max_cross_cluster_contra >= 0.35)
+
+        # Non-contradictory complementary multi-aspect clusters:
+        if not has_active_contradiction:
+            non_adv_clusters = [cl for cl in clusters if not cl.is_adversarial_candidate]
+            adv_clusters = [cl for cl in clusters if cl.is_adversarial_candidate]
+
+            selected: List[ProductionChunk] = []
+            for cl in non_adv_clusters:
+                selected.extend(cl.chunks)
+
+            quarantined: List[ProductionChunk] = []
+            for cl in adv_clusters:
+                quarantined.extend(cl.chunks)
+
+            if selected:
+                avg_trust_all = float(np.mean([c.trust_score for c in selected]))
+                status = ConsensusStatus.UNANIMOUS_GROUNDED if not adv_clusters else ConsensusStatus.COLLUSION_DISCARDED
+                return GWCCDecision(
+                    status=status,
+                    selected_chunks=selected,
+                    quarantined_chunks=quarantined,
+                    confidence_score=round(min(1.0, avg_trust_all), 4),
+                    selected_cluster_id=clusters[0].cluster_id,
+                    lgo_delta=lgo_delta,
+                    counterfactual_deltas=lgo_contra_deltas,
+                    explanation=(
+                        f"Multi-aspect evidence clusters detected without mutual contradiction "
+                        f"(max contradiction {max_cross_cluster_contra:.2f} < 0.35). "
+                        f"Selected {len(selected)} verified chunks across {len(non_adv_clusters)} lineages."
+                    ),
+                    group_telemetry={
+                        "total_clusters": len(clusters),
+                        "cluster_weights": {c.cluster_id: c.evidence_weight for c in clusters},
+                        "dominance_ratio": round(ratio, 4),
+                        "max_cross_cluster_contra": round(max_cross_cluster_contra, 4),
+                        "total_contra_all": round(total_contra_all, 4)
+                    }
+                )
 
         # Check for consensus dominance supported by independent lineages
         if ratio >= self.dominance_ratio and not best_cluster.is_adversarial_candidate:
@@ -149,6 +207,28 @@ class LGOConsensusAnalyzer:
                 }
             )
 
+        # If one cluster is non-adversarial and the other is adversarial candidate:
+        non_adv_clusters = [cl for cl in clusters if not cl.is_adversarial_candidate]
+        if len(non_adv_clusters) == 1 and any(cl.is_adversarial_candidate for cl in clusters):
+            winner = non_adv_clusters[0]
+            quarantined = [c for cl in clusters if cl.cluster_id != winner.cluster_id for c in cl.chunks]
+            return GWCCDecision(
+                status=ConsensusStatus.COLLUSION_DISCARDED,
+                selected_chunks=winner.chunks,
+                quarantined_chunks=quarantined,
+                confidence_score=round(winner.average_trust, 4),
+                selected_cluster_id=winner.cluster_id,
+                lgo_delta=lgo_delta,
+                counterfactual_deltas=lgo_contra_deltas,
+                explanation=f"Isolated and quarantined adversarial candidate clusters. Grounded in cluster {winner.cluster_id}.",
+                group_telemetry={
+                    "total_clusters": len(clusters),
+                    "cluster_weights": {c.cluster_id: c.evidence_weight for c in clusters},
+                    "dominance_ratio": round(ratio, 4),
+                    "lgo_contra_deltas": lgo_contra_deltas
+                }
+            )
+
         # If clusters are evenly balanced with contradictory claims -> Conflicting evidence
         all_quarantined = list(original_chunks)
         return GWCCDecision(
@@ -157,7 +237,7 @@ class LGOConsensusAnalyzer:
             quarantined_chunks=all_quarantined,
             confidence_score=0.35,
             counterfactual_deltas=lgo_contra_deltas,
-            explanation=f"Contradictory evidence pools detected without consensus dominance (ratio {ratio:.2f} < {self.dominance_ratio}).",
+            explanation=f"Contradictory evidence pools detected without consensus dominance (ratio {ratio:.2f} < {self.dominance_ratio}, max contra {max_cross_cluster_contra:.2f}).",
             group_telemetry={
                 "total_clusters": len(clusters),
                 "cluster_weights": {c.cluster_id: c.evidence_weight for c in clusters},

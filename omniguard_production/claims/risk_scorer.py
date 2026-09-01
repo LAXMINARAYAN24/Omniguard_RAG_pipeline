@@ -164,24 +164,48 @@ class CalibratedRiskRouter:
                     if not claim_indices_i or not claim_indices_j:
                         continue
 
-                    max_c = 0.0
-                    max_e = 0.0
+                    max_pair_contra = 0.0
                     for ci in claim_indices_i:
+                        cl_i = all_claims[ci]
                         for cj in claim_indices_j:
+                            cl_j = all_claims[cj]
+
                             c_score = float(c_matrix[ci, cj])
                             e_score = float(ent_matrix[ci, cj])
-                            if c_score > max_c:
-                                max_c = c_score
-                            if e_score > max_e:
-                                max_e = e_score
 
-                    # Entailment discounting: if propositions strongly entail each other, contradiction is nullified
-                    net_contra = max_c * (1.0 - max_e)
-                    if max_e >= 0.70:
-                        net_contra = 0.0
+                            # Relevance weight of this claim pair
+                            rel_weight = self._compute_claim_relevance_weight(cl_i, cl_j)
 
-                    chunk_contra_matrix[i, j] = round(net_contra, 4)
-                    chunk_contra_matrix[j, i] = round(net_contra, 4)
+                            # Perform heuristic check for false positives
+                            h_scores = self.nli._heuristic_nli(cl_i.text, cl_j.text)
+                            h_c = h_scores.get("contradiction", 0.0)
+
+                            # Discount neural contradiction if there's no heuristic sign of contradiction
+                            if h_c <= 0.05:
+                                adj_c = min(c_score, 0.10)
+                            else:
+                                adj_c = c_score
+
+                            # Calibrated entailment discounting per pair:
+                            # if entailment score is high (>= 0.70), contradiction is nullified.
+                            if e_score >= 0.70:
+                                discounted_c = 0.0
+                            else:
+                                discounted_c = adj_c * (1.0 - e_score)
+
+                            # Apply relevance weighting
+                            weighted_c = discounted_c * rel_weight
+
+                            # High-confidence claim contradictions (c_score >= 0.70) retain a minimum
+                            # chunk-level contradiction score >= 0.50, provided they are not heuristically discounted.
+                            if c_score >= 0.70 and discounted_c > 0.0 and h_c > 0.05:
+                                weighted_c = max(weighted_c, 0.50)
+
+                            if weighted_c > max_pair_contra:
+                                max_pair_contra = weighted_c
+
+                    chunk_contra_matrix[i, j] = round(max_pair_contra, 4)
+                    chunk_contra_matrix[j, i] = round(max_pair_contra, 4)
 
         # 3. Query Security Risk
         q_flags = query_security_flags or []
